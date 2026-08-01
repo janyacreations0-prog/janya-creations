@@ -1,28 +1,44 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabase';
 
 export async function POST(request: Request) {
   try {
     const { email } = await request.json();
-    const supabase = createRouteHandlerClient({ cookies });
-    
-    // Check if user exists in auth.users
-    const { data: user, error } = await supabase
-      .from('users') // Replace with your users/profiles table name
-      .select('id, email')
-      .eq('email', email)
-      .single();
 
-    if (!user) {
+    if (!email) {
+      return NextResponse.json(
+        { exists: false, message: 'Email is required' },
+        { status: 400 }
+      );
+    }
+
+    // Try to check if user exists by attempting a password reset
+    // This is the safest way without admin privileges
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'https://janya-creations.vercel.app'}/reset-password`,
+    });
+
+    // If there's an error about user not found
+    if (error && error.message && error.message.toLowerCase().includes('not found')) {
       return NextResponse.json(
         { exists: false, message: 'No account found with this email' },
         { status: 404 }
       );
     }
 
-    return NextResponse.json({ exists: true, user });
+    // If any other error, user might exist
+    if (error) {
+      return NextResponse.json(
+        { exists: false, message: 'Error checking user' },
+        { status: 500 }
+      );
+    }
+
+    // No error means user exists
+    return NextResponse.json({ exists: true });
+    
   } catch (error) {
+    console.error('Error checking user:', error);
     return NextResponse.json(
       { exists: false, message: 'Error checking user' },
       { status: 500 }
