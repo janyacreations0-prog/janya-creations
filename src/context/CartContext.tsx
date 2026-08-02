@@ -11,7 +11,7 @@ export interface CartItem {
 interface CartContextType {
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number) => void;
-  removeFromCart: (productId: string) => void;
+  removeFromCart: (productId: Product['id']) => void;
   clearCart: () => void;
   cartTotal: number;
   cartCount: number;
@@ -41,7 +41,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const addToCart = (product: Product, quantity = 1) => {
     setCart((prevCart) => {
-      const existingIndex = prevCart.findIndex((item) => item.product.id === product.id);
+      const existingIndex = prevCart.findIndex(
+        (item) => String(item.product.id) === String(product.id)
+      );
       if (existingIndex > -1) {
         const updated = [...prevCart];
         updated[existingIndex].quantity += quantity;
@@ -51,8 +53,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const removeFromCart = (productId: string) => {
-    setCart((prevCart) => prevCart.filter((item) => item.product.id !== productId));
+  const removeFromCart = (productId: Product['id']) => {
+    setCart((prevCart) =>
+      prevCart.filter((item) => String(item.product.id) !== String(productId))
+    );
   };
 
   const clearCart = () => setCart([]);
