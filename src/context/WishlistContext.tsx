@@ -6,8 +6,8 @@ import { Product } from '@/types';
 interface WishlistContextType {
   wishlist: Product[];
   addToWishlist: (product: Product) => void;
-  removeFromWishlist: (productId: string) => void;
-  isInWishlist: (productId: string) => boolean;
+  removeFromWishlist: (productId: Product['id']) => void;
+  isInWishlist: (productId: Product['id']) => boolean;
   toggleWishlist: (product: Product) => void;
   wishlistCount: number;
 }
@@ -41,11 +41,11 @@ export function WishlistProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const removeFromWishlist = (productId: string) => {
+  const removeFromWishlist = (productId: Product['id']) => {
     setWishlist((prev) => prev.filter((item) => String(item.id) !== String(productId)));
   };
 
-  const isInWishlist = (productId: string) => {
+  const isInWishlist = (productId: Product['id']) => {
     return wishlist.some((item) => String(item.id) === String(productId));
   };
 

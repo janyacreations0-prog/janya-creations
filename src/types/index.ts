@@ -20,7 +20,7 @@ export interface ProductVariant {
 
 // Product Interface
 export interface Product {
-  id: number;
+  id: string | number;
   title: string;
   slug: string;
   description?: string;
@@ -31,6 +31,10 @@ export interface Product {
   material?: string;
   plating?: string;
   care_instructions?: string;
+  image_url?: string;
+  image_large?: string;
+  image_medium?: string;
+  image_thumbnail?: string;
   images: string[]; // Up to 5 image URLs from Cloudinary/Supabase
   is_featured: boolean;
   is_new_arrival: boolean;
