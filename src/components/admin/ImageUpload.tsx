@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { Upload, X, Image as ImageIcon, Loader2, Check } from 'lucide-react';
 
 interface ImageUploadProps {
@@ -95,6 +95,7 @@ export default function ImageUpload({
     setUploaded(false);
 
     try {
+      const supabase = createClient();
       const baseFileName = `${Date.now()}-${Math.random().toString(36).substring(2)}`;
       const uploadPromises = [];
 

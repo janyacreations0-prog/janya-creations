@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Mail, Phone, MapPin, Send, MessageCircle, Clock } from 'lucide-react';
+import { Mail, Phone, MapPin, Send, Clock, Info } from 'lucide-react';
+import { BUSINESS, businessAddress } from '@/lib/contact';
 
 export default function Contact() {
   const [formData, setFormData] = useState({
@@ -10,21 +11,20 @@ export default function Contact() {
     subject: '',
     message: ''
   });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [showHint, setShowHint] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    
-    // Simulate sending (replace with actual API call)
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    setIsSubmitting(false);
-    setIsSuccess(true);
-    setFormData({ name: '', email: '', subject: '', message: '' });
-    
-    setTimeout(() => setIsSuccess(false), 5000);
+    // Real submission mechanism: open the customer's email app with a
+    // pre-filled message to the verified support address. No fake "sent".
+    const subject = encodeURIComponent(
+      formData.subject || `Enquiry from ${formData.name || 'a visitor'}`
+    );
+    const body = encodeURIComponent(
+      `Name: ${formData.name}\nEmail: ${formData.email}\n\n${formData.message}`
+    );
+    window.location.href = `mailto:${BUSINESS.email}?subject=${subject}&body=${body}`;
+    setShowHint(true);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -37,7 +37,7 @@ export default function Contact() {
         {/* Header */}
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Get in Touch</h1>
-          <p className="text-gray-500">Have questions? We'd love to hear from you!</p>
+          <p className="text-gray-500">We&apos;d love to hear from you!</p>
         </div>
 
         <div className="grid md:grid-cols-3 gap-8">
@@ -45,13 +45,18 @@ export default function Contact() {
           <div className="md:col-span-1 space-y-6">
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <h3 className="font-semibold text-gray-800 mb-4">Contact Information</h3>
-              
+
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
                   <Mail className="w-5 h-5 text-rose-600 mt-0.5" />
                   <div>
                     <p className="text-sm text-gray-500">Email</p>
-                    <p className="text-gray-800">support@janyacreations.com</p>
+                    <a
+                      href={`mailto:${BUSINESS.email}`}
+                      className="text-gray-800 hover:text-rose-600 transition"
+                    >
+                      {BUSINESS.email}
+                    </a>
                   </div>
                 </div>
 
@@ -59,7 +64,7 @@ export default function Contact() {
                   <Phone className="w-5 h-5 text-rose-600 mt-0.5" />
                   <div>
                     <p className="text-sm text-gray-500">Phone</p>
-                    <p className="text-gray-800">+91 98765 43210</p>
+                    <p className="text-gray-800">{BUSINESS.phone}</p>
                   </div>
                 </div>
 
@@ -67,34 +72,28 @@ export default function Contact() {
                   <MapPin className="w-5 h-5 text-rose-600 mt-0.5" />
                   <div>
                     <p className="text-sm text-gray-500">Address</p>
-                    <p className="text-gray-800">Jaipur, Rajasthan, India</p>
+                    <p className="text-gray-800">{businessAddress()}</p>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-3">
                   <Clock className="w-5 h-5 text-rose-600 mt-0.5" />
                   <div>
-                    <p className="text-sm text-gray-500">Business Hours</p>
-                    <p className="text-gray-800">Mon-Sat: 10:00 AM - 7:00 PM</p>
-                    <p className="text-gray-500 text-sm">Sunday: Closed</p>
+                    <p className="text-sm text-gray-500">Support Hours</p>
+                    <p className="text-gray-800">Monday – Saturday, 10:00 AM – 7:00 PM</p>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Social/Quick Links */}
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <h4 className="font-semibold text-gray-800 mb-3">Quick Links</h4>
               <ul className="space-y-2 text-sm">
-                <li>
-                  <a href="/shop" className="text-gray-600 hover:text-rose-600 transition">Browse Products</a>
-                </li>
-                <li>
-                  <a href="/privacy-policy" className="text-gray-600 hover:text-rose-600 transition">Privacy Policy</a>
-                </li>
-                <li>
-                  <a href="/terms" className="text-gray-600 hover:text-rose-600 transition">Terms & Conditions</a>
-                </li>
+                <li><a href="/shop" className="text-gray-600 hover:text-rose-600 transition">Browse Products</a></li>
+                <li><a href="/shipping-policy" className="text-gray-600 hover:text-rose-600 transition">Shipping Policy</a></li>
+                <li><a href="/refund-policy" className="text-gray-600 hover:text-rose-600 transition">Returns &amp; Refunds</a></li>
+                <li><a href="/privacy-policy" className="text-gray-600 hover:text-rose-600 transition">Privacy Policy</a></li>
+                <li><a href="/terms" className="text-gray-600 hover:text-rose-600 transition">Terms &amp; Conditions</a></li>
               </ul>
             </div>
           </div>
@@ -103,20 +102,22 @@ export default function Contact() {
           <div className="md:col-span-2">
             <div className="bg-white rounded-xl shadow-sm border p-8">
               <h3 className="text-xl font-semibold text-gray-800 mb-6">Send Us a Message</h3>
-              
-              {isSuccess && (
-                <div className="mb-4 p-4 bg-green-50 text-green-700 rounded-lg border border-green-200">
-                  <MessageCircle className="inline w-5 h-5 mr-2" />
-                  Thank you! Your message has been sent. We'll get back to you soon.
+
+              {showHint && (
+                <div className="mb-4 p-4 bg-amber-50 text-amber-800 rounded-lg border border-amber-200 flex items-start gap-2">
+                  <Info className="w-5 h-5 shrink-0 mt-0.5" />
+                  <p className="text-sm">
+                    Your email app should now open with your message ready to send to{' '}
+                    <strong>{BUSINESS.email}</strong>. If it didn&apos;t open, please email us
+                    directly or call <strong>{BUSINESS.phone}</strong>.
+                  </p>
                 </div>
               )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Full Name *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
                     <input
                       type="text"
                       name="name"
@@ -128,9 +129,7 @@ export default function Contact() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Email Address *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>
                     <input
                       type="email"
                       name="email"
@@ -144,9 +143,7 @@ export default function Contact() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Subject
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
                   <input
                     type="text"
                     name="subject"
@@ -158,9 +155,7 @@ export default function Contact() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Message *
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Message *</label>
                   <textarea
                     name="message"
                     value={formData.message}
@@ -174,20 +169,13 @@ export default function Contact() {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full bg-rose-600 text-white py-3 rounded-lg font-semibold hover:bg-rose-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full bg-rose-600 text-white py-3 rounded-lg font-semibold hover:bg-rose-700 transition flex items-center justify-center gap-2"
                 >
-                  {isSubmitting ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" /> Send Message
-                    </>
-                  )}
+                  <Send className="w-4 h-4" /> Compose Email
                 </button>
+                <p className="text-xs text-gray-400 text-center">
+                  This opens your email app with your message ready to send to us.
+                </p>
               </form>
             </div>
           </div>

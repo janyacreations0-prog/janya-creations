@@ -81,21 +81,34 @@ export default function WishlistPage() {
                   </button>
                 </div>
 
-                <div className="p-4 flex flex-col flex-1 justify-between space-y-3">
-                  <div>
-                    <h3 className="font-serif font-bold text-gray-900 text-sm line-clamp-1">
-                      {product.title}
-                    </h3>
-                    <p className="text-rose-600 font-bold text-sm mt-1">₹{product.price}</p>
-                  </div>
+                  <div className="p-4 flex flex-col flex-1 justify-between space-y-3">
+                    <div>
+                      <Link href={`/products/${product.id}`}>
+                        <h3 className="font-serif font-bold text-gray-900 text-sm line-clamp-1 hover:text-rose-600">
+                          {product.title}
+                        </h3>
+                      </Link>
+                      <p className="text-rose-600 font-bold text-sm mt-1">
+                        {product.discount_price ? (
+                          <>
+                            ₹{product.discount_price}{' '}
+                            <span className="text-xs text-gray-400 line-through font-normal">
+                              ₹{product.price}
+                            </span>
+                          </>
+                        ) : (
+                          <>₹{product.price}</>
+                        )}
+                      </p>
+                    </div>
 
-                  <button
-                    onClick={() => addToCart(product)}
-                    className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-2"
-                  >
-                    <ShoppingBag className="w-4 h-4" /> Move to Bag
-                  </button>
-                </div>
+                    <button
+                      onClick={() => addToCart(product)}
+                      className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      <ShoppingBag className="w-4 h-4" /> Move to Bag
+                    </button>
+                  </div>
               </div>
             ))}
           </div>

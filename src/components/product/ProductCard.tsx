@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { Heart, ShoppingBag } from 'lucide-react';
 import { Product } from '@/types';
@@ -13,18 +13,33 @@ interface ProductCardProps {
 }
 
 export default function ProductCard({ product }: ProductCardProps) {
-  // ✅ Connected to global Contexts
   const { toggleWishlist, isInWishlist } = useWishlist();
   const { addToCart } = useCart();
 
+  const [added, setAdded] = useState(false);
+  const [error, setError] = useState('');
+
   const isWishlisted = isInWishlist(product.id);
   const discountPercent = calculateDiscount(product.price, product.discount_price);
+  const outOfStock = !product.in_stock || (typeof product.stock_quantity === 'number' && product.stock_quantity <= 0);
 
-  // Fallback placeholder image if product has no images uploaded yet
   const primaryImage =
     product.images && product.images.length > 0
       ? product.images[0]
       : 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800';
+
+  const handleQuickAdd = async () => {
+    if (outOfStock) return;
+    setError('');
+    const res = await addToCart(product, 1);
+    if (res.success) {
+      setAdded(true);
+      setTimeout(() => setAdded(false), 2000);
+    } else {
+      setError(res.error || 'Unable to add to cart. Please try again.');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
 
   return (
     <div className="group relative bg-white border border-gray-100 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col">
@@ -53,7 +68,7 @@ export default function ProductCard({ product }: ProductCardProps) {
           )}
         </div>
 
-        {/* ✅ Connected Wishlist Button */}
+        {/* Wishlist Button */}
         <button
           type="button"
           onClick={(e) => {
@@ -61,36 +76,46 @@ export default function ProductCard({ product }: ProductCardProps) {
             toggleWishlist(product);
           }}
           className="absolute top-2 right-2 p-1.5 rounded-full bg-white/80 backdrop-blur-md hover:bg-white text-gray-700 hover:text-rose-600 shadow-sm transition-colors z-10"
-          aria-label="Add to wishlist"
+          aria-label={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
         >
           <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-rose-600 text-rose-600' : ''}`} />
         </button>
 
-        {/* ✅ Connected Quick Add To Bag Button */}
-        <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              addToCart(product);
-            }}
-            className="w-full py-2 bg-white/95 hover:bg-rose-600 hover:text-white text-gray-900 text-xs font-bold rounded shadow flex items-center justify-center space-x-1 transition-colors"
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>ADD TO BAG</span>
-          </button>
-        </div>
+        {/* Out of stock overlay */}
+        {outOfStock && (
+          <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
+            <span className="bg-gray-900/80 text-white text-[11px] font-bold px-3 py-1.5 rounded uppercase tracking-wider">
+              Out of Stock
+            </span>
+          </div>
+        )}
+
+        {/* Quick Add To Cart — always visible on touch, hover-reveal on desktop */}
+        {!outOfStock && (
+          <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/60 to-transparent opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                handleQuickAdd();
+              }}
+              className="w-full py-2 bg-white/95 hover:bg-rose-600 hover:text-white text-gray-900 text-xs font-bold rounded shadow flex items-center justify-center space-x-1 transition-colors"
+              aria-label={`Add ${product.title} to cart`}
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>{added ? 'ADDED!' : 'ADD TO CART'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Product Details */}
       <div className="p-3 flex flex-col flex-1 justify-between bg-white">
         <div>
-          {/* Material / Category Tag */}
           <span className="text-[10px] text-gray-400 uppercase tracking-wider block mb-0.5">
             {product.material || 'Janya Special'}
           </span>
 
-          {/* Product Title */}
           <Link href={`/products/${product.id}`}>
             <h3 className="text-xs sm:text-sm font-medium text-gray-800 line-clamp-1 hover:text-rose-600 transition-colors">
               {product.title}
@@ -98,7 +123,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           </Link>
         </div>
 
-        {/* Pricing */}
         <div className="mt-2 flex items-baseline space-x-2">
           {product.discount_price ? (
             <>
@@ -115,6 +139,8 @@ export default function ProductCard({ product }: ProductCardProps) {
             </span>
           )}
         </div>
+
+        {error && <p className="mt-2 text-[11px] text-rose-600">{error}</p>}
       </div>
     </div>
   );

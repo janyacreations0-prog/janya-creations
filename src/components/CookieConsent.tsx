@@ -35,7 +35,7 @@ export default function CookieConsent() {
             <Cookie className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm text-gray-700">
-                We use cookies to enhance your browsing experience, analyze site traffic, and personalize content.
+                We use cookies and local storage to keep you signed in, remember your cart and wishlist, and save your preferences.
                 By clicking <strong>"Accept All"</strong>, you consent to our use of cookies.
               </p>
               <div className="flex flex-wrap gap-3 mt-1">

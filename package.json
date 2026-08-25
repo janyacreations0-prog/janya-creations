@@ -6,25 +6,32 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "supabase": "supabase"
   },
   "dependencies": {
+    "@phonepe-pg/pg-sdk-node": "^2.0.6",
     "@supabase/auth-helpers-nextjs": "^0.15.0",
+    "@supabase/ssr": "0.12.5",
     "@supabase/supabase-js": "^2.49.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.477.0",
     "next": "^15.1.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "resend": "^6.22.1",
     "sharp": "^0.35.3",
     "tailwind-merge": "^3.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.5.2",
+    "supabase": "2.115.0",
     "tailwindcss": "^3.4.17",
     "typescript": "5.9.3"
   }

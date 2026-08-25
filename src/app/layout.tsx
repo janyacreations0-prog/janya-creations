@@ -1,8 +1,9 @@
 import { CartProvider } from '@/context/CartContext';
 import { WishlistProvider } from '@/context/WishlistContext';
-import Navbar from '@/components/navbar/Navbar';
+import NavbarShell from '@/components/navbar/NavbarShell';
 import Footer from '@/components/footer/Footer';
 import CookieConsent from '@/components/CookieConsent';
+import Chatbot from '@/components/chatbot/Chatbot';
 import './globals.css';
 
 export default function RootLayout({
@@ -15,12 +16,13 @@ export default function RootLayout({
       <body suppressHydrationWarning>
         <WishlistProvider>
           <CartProvider>
-            <Navbar />
+            <NavbarShell />
             <main className="min-h-screen">
               {children}
             </main>
             <Footer />
             <CookieConsent />
+            <Chatbot />
           </CartProvider>
         </WishlistProvider>
       </body>

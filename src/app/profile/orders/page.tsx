@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { Package, ChevronLeft, ChevronRight, ShoppingBag } from 'lucide-react';
 
 interface Order {
@@ -17,6 +17,7 @@ interface Order {
 
 export default function MyOrders() {
   const router = useRouter();
+  const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -191,11 +192,11 @@ export default function MyOrders() {
                       </div>
                     </div>
                     <div className="pt-2 flex gap-3">
-                      <Link 
-                        href={`/track-order?orderId=${order.id}`}
+                      <Link
+                        href="/orders"
                         className="text-sm text-rose-600 hover:text-rose-700 font-medium transition"
                       >
-                        Track Order →
+                        My Orders →
                       </Link>
                     </div>
                   </div>

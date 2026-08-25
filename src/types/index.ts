@@ -1,11 +1,36 @@
-// Category Interface
+// ============================================================================
+// Janya Creations — Shared types
+// ============================================================================
+
+// Category attribute definition (stored in categories.attribute_schema JSONB)
+export interface CategoryAttributeDefinition {
+  key: string;
+  label: string;
+  type: 'text' | 'select' | 'multi-select' | 'number' | 'boolean';
+  options?: string[];
+  required?: boolean;
+  suffix?: string;
+  placeholder?: string;
+}
+
+// Category Interface (mirrors the database `categories` table)
 export interface Category {
-  id: number;
+  id: string;
   name: string;
   slug: string;
-  description?: string;
-  image_url?: string;
+  description?: string | null;
+  image_url?: string | null;
+  parent_id?: string | null;
+  is_active: boolean;
+  sort_order: number;
+  attribute_schema?: CategoryAttributeDefinition[] | null;
   created_at?: string;
+  updated_at?: string;
+}
+
+// Category with its one-level subcategories attached
+export interface CategoryWithChildren extends Category {
+  children?: CategoryWithChildren[];
 }
 
 // Product Variant (Sizes like S, M, L or Colors like Gold, Silver)
@@ -22,12 +47,15 @@ export interface ProductVariant {
 export interface Product {
   id: string | number;
   title: string;
-  slug: string;
+  slug?: string;
   description?: string;
-  category_id?: number;
-  category?: Category;
+  category_id?: string | null;
+  category?: string | Category | null;
+  attributes?: Record<string, unknown>;
   price: number;
   discount_price?: number | null;
+  stock_quantity?: number;
+  in_stock?: boolean;
   material?: string;
   plating?: string;
   care_instructions?: string;
@@ -38,7 +66,6 @@ export interface Product {
   images: string[]; // Up to 5 image URLs from Cloudinary/Supabase
   is_featured: boolean;
   is_new_arrival: boolean;
-  in_stock: boolean;
   variants?: ProductVariant[];
   created_at?: string;
   updated_at?: string;

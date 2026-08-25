@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { User, Mail, Phone, Package, Heart, LogOut, Edit2, Check, X, ShoppingBag } from 'lucide-react';
 import Link from 'next/link';
 
@@ -15,6 +15,7 @@ interface Order {
 
 export default function ProfilePage() {
   const router = useRouter();
+  const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -181,7 +182,7 @@ export default function ProfilePage() {
                   <User className="w-4 h-4" /> My Profile
                 </Link>
                 <Link 
-                  href="/profile/orders" 
+                  href="/orders" 
                   className="flex items-center gap-3 px-4 py-2.5 text-gray-600 hover:bg-gray-50 rounded-lg transition"
                 >
                   <Package className="w-4 h-4" /> My Orders
@@ -312,7 +313,7 @@ export default function ProfilePage() {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-semibold text-gray-900">Recent Orders</h3>
                 {orders.length > 0 && (
-                  <Link href="/profile/orders" className="text-sm text-rose-600 hover:text-rose-700 transition">
+                  <Link href="/orders" className="text-sm text-rose-600 hover:text-rose-700 transition">
                     View All →
                   </Link>
                 )}

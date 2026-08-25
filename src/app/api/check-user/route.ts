@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     // Try to check if user exists by attempting a password reset
     // This is the safest way without admin privileges
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'https://janya-creations.vercel.app'}/reset-password`,
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'https://janya-creations.vercel.app'}/auth/callback?next=/reset-password`,
     });
 
     // If there's an error about user not found

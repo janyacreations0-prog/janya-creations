@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { Mail, ArrowLeft, AlertCircle, CheckCircle, Crown } from 'lucide-react';
 
 export default function AdminForgotPassword() {
   const router = useRouter();
+  const supabase = createClient();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -28,7 +29,7 @@ export default function AdminForgotPassword() {
     try {
       // Let Supabase handle the check - if user doesn't exist, it will return an error
       const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
       });
 
       // If there's an error, it means the email doesn't exist or there's another issue

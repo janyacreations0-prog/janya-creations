@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import ProductCard from '@/components/product/ProductCard';
+import ReviewsSection from '@/components/reviews/ReviewsSection';
 import { Product } from '@/types';
 import { getProducts } from '@/lib/products';
 import { Sparkles, ShieldCheck, Truck, RefreshCw } from 'lucide-react';
@@ -18,7 +19,7 @@ export default function HomePage() {
         
         // Safely map database fields with fallbacks for NULL/undefined values
         const mappedProducts: Product[] = (data || []).map((item: any) => {
-          const safeTitle = item.title || 'Untitled Product';
+          const safeTitle = item.title || item.name || 'Untitled Product';
           const safeSlug = safeTitle
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
@@ -33,9 +34,10 @@ export default function HomePage() {
             material: item.category || 'Jewellery',
             plating: item.badge || '',
             images: item.image_url ? [item.image_url] : ['/placeholder.jpg'],
+            stock_quantity: item.stock_quantity ?? 0,
+            in_stock: item.in_stock ?? ((item.stock_quantity ?? 0) > 0),
             is_featured: true,
             is_new_arrival: true,
-            in_stock: item.in_stock ?? true,
           };
         });
 
@@ -67,13 +69,13 @@ export default function HomePage() {
             </p>
             <div className="pt-2 flex flex-wrap justify-center lg:justify-start gap-3">
               <Link
-                href="/shop?category=jewellery"
+                href="/category/artificial-jewellery"
                 className="px-6 py-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold tracking-wider uppercase rounded-md shadow-md transition-all"
               >
                 Shop Jewellery
               </Link>
               <Link
-                href="/shop?category=clothing"
+                href="/category/womens-clothing"
                 className="px-6 py-3 bg-white hover:bg-gray-100 text-gray-900 text-xs font-bold tracking-wider uppercase rounded-md border border-gray-300 transition-all"
               >
                 Shop Apparel
@@ -147,6 +149,9 @@ export default function HomePage() {
           </div>
         )}
       </main>
+
+      {/* Customer Reviews — social proof (hidden automatically when no approved reviews) */}
+      <ReviewsSection />
     </div>
   );
 }
