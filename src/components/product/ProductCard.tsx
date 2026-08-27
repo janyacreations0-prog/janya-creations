@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Heart, ShoppingBag } from 'lucide-react';
 import { Product } from '@/types';
 import { formatPrice, calculateDiscount } from '@/lib/utils';
@@ -23,10 +24,12 @@ export default function ProductCard({ product }: ProductCardProps) {
   const discountPercent = calculateDiscount(product.price, product.discount_price);
   const outOfStock = !product.in_stock || (typeof product.stock_quantity === 'number' && product.stock_quantity <= 0);
 
+  // Prefer the small 300px thumbnail for listing cards. Large images are only
+  // used on the product detail page.
   const primaryImage =
-    product.images && product.images.length > 0
-      ? product.images[0]
-      : 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800';
+    (product.image_thumbnail as string) ||
+    (product.images && product.images.length > 0 ? product.images[0] : '') ||
+    'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800';
 
   const handleQuickAdd = async () => {
     if (outOfStock) return;
@@ -46,10 +49,12 @@ export default function ProductCard({ product }: ProductCardProps) {
       {/* Image & Overlay Badges Container */}
       <div className="relative aspect-[3/4] w-full bg-gray-50 overflow-hidden">
         <Link href={`/products/${product.id}`} className="block w-full h-full">
-          <img
+          <Image
             src={primaryImage}
             alt={product.title}
-            className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
+            fill
+            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+            className="object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
             loading="lazy"
           />
         </Link>

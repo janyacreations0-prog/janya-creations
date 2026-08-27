@@ -1,4 +1,4 @@
-import { getProducts } from '@/lib/products';
+import { getProductById } from '@/lib/products';
 import { getCategoryById, mergeAttributeSchemas } from '@/lib/categories';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -17,10 +17,7 @@ interface ProductPageProps {
 
 export default async function ProductDetailPage({ params }: ProductPageProps) {
   const { id } = await params;
-  const allProducts = await getProducts();
-
-  // Match by id (convert both to string for comparison)
-  const rawProduct = allProducts.find((p: any) => String(p.id) === String(id));
+  const rawProduct = await getProductById(id);
 
   if (!rawProduct) {
     notFound();

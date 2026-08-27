@@ -1,16 +1,47 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { User, Mail, Phone, Package, Heart, LogOut, Edit2, Check, X, ShoppingBag } from 'lucide-react';
+import {
+  User, Mail, Phone, Package, Heart, LogOut, Edit2, Check, X,
+  ShoppingBag, ChevronRight, ArrowLeft,
+} from 'lucide-react';
 import Link from 'next/link';
 
 interface Order {
   id: string;
-  total: number;
-  status: 'pending' | 'shipped' | 'delivered';
+  order_number: string;
+  total_amount: number;
+  status: string;
+  payment_status: string;
   created_at: string;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700',
+  confirmed: 'bg-blue-100 text-blue-700',
+  processing: 'bg-indigo-100 text-indigo-700',
+  shipped: 'bg-purple-100 text-purple-700',
+  delivered: 'bg-emerald-100 text-emerald-700',
+  cancelled: 'bg-gray-100 text-gray-600',
+  refunded: 'bg-rose-100 text-rose-700',
+};
+
+function statusLabel(status: string): string {
+  return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function initials(name: string | undefined, email: string | undefined): string {
+  if (name) {
+    return name
+      .split(' ')
+      .map((p) => p[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase();
+  }
+  return (email || 'U').slice(0, 2).toUpperCase();
 }
 
 export default function ProfilePage() {
@@ -25,16 +56,37 @@ export default function ProfilePage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  const loadOrders = useCallback(
+    async (userId: string) => {
+      // Real orders only, from Supabase (RLS scopes to the authenticated user).
+      const { data, error } = await supabase
+        .from('orders')
+        .select('id, order_number, total_amount, status, payment_status, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (error) {
+        console.error('Error loading orders:', error.message);
+        setOrders([]);
+        return;
+      }
+      setOrders((data as Order[]) || []);
+    },
+    [supabase]
+  );
+
   useEffect(() => {
     loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadProfile = async () => {
     setLoading(true);
     try {
-      // Get current user
-      const { data: { session } } = await supabase.auth.getSession();
-      
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       if (!session) {
         router.push('/login');
         return;
@@ -43,37 +95,7 @@ export default function ProfilePage() {
       setUser(session.user);
       setName(session.user.user_metadata?.full_name || '');
       setPhone(session.user.user_metadata?.phone || '');
-
-      // Fetch orders from localStorage
-      const storedOrders = localStorage.getItem('userOrders');
-      if (storedOrders) {
-        setOrders(JSON.parse(storedOrders));
-      } else {
-        // Sample orders for demo
-        const sampleOrders: Order[] = [
-          {
-            id: 'JANYA-1001',
-            total: 2499,
-            status: 'delivered',
-            created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-          },
-          {
-            id: 'JANYA-1002',
-            total: 3999,
-            status: 'shipped',
-            created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-          },
-          {
-            id: 'JANYA-1003',
-            total: 1199,
-            status: 'pending',
-            created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-          }
-        ];
-        setOrders(sampleOrders);
-        localStorage.setItem('userOrders', JSON.stringify(sampleOrders));
-      }
-
+      await loadOrders(session.user.id);
     } catch (error) {
       console.error('Error loading profile:', error);
     } finally {
@@ -92,18 +114,18 @@ export default function ProfilePage() {
         data: {
           full_name: name,
           phone: phone,
-        }
+        },
       });
 
       if (error) throw error;
 
       setSuccess('✅ Profile updated successfully!');
       setIsEditing(false);
-      
-      // Refresh user data
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
 
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      setUser(user);
     } catch (error: any) {
       setError(error.message || 'Failed to update profile');
     } finally {
@@ -113,34 +135,19 @@ export default function ProfilePage() {
 
   const handleLogout = async () => {
     try {
-      // Sign out from Supabase
       await supabase.auth.signOut();
-      
-      // Clear all user state
       setUser(null);
-      setName('');
-      setPhone('');
       setOrders([]);
       setIsEditing(false);
-      setError('');
-      setSuccess('');
-      
-      // Redirect to home page
       router.push('/');
-      router.refresh(); // Force refresh to clear cache
+      router.refresh();
     } catch (error) {
       console.error('Logout error:', error);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'delivered': return 'bg-green-100 text-green-700';
-      case 'shipped': return 'bg-blue-100 text-blue-700';
-      case 'pending': return 'bg-yellow-100 text-yellow-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
+  const navItemCls =
+    'flex items-center gap-3 w-full px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors';
 
   if (loading) {
     return (
@@ -153,68 +160,108 @@ export default function ProfilePage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-8">
-          <Link href="/" className="text-gray-500 hover:text-rose-600 transition">
-            ← Back to Home
-          </Link>
-          <h1 className="text-2xl font-serif font-bold text-gray-900">My Profile</h1>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-rose-600 transition">
+              <ArrowLeft className="w-4 h-4" /> Back to Home
+            </Link>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-xl sm:text-2xl font-serif font-bold text-gray-900">My Account</h1>
+          </div>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="grid lg:grid-cols-4 gap-6">
           {/* Sidebar */}
-          <div className="md:col-span-1">
-            <div className="bg-white rounded-xl shadow-sm border p-6 sticky top-24">
-              <div className="text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-rose-100 to-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <User className="w-10 h-10 text-rose-600" />
+          <aside className="lg:col-span-1">
+            <div className="bg-white rounded-2xl shadow-sm border overflow-hidden lg:sticky lg:top-24">
+              <div className="p-6 bg-gradient-to-br from-rose-50 to-amber-50 border-b border-gray-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-full bg-rose-600 text-white flex items-center justify-center text-lg font-bold shadow-sm shrink-0">
+                    {initials(user.user_metadata?.full_name, user.email)}
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-gray-900 truncate">
+                      {user.user_metadata?.full_name || 'User'}
+                    </h3>
+                    <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                  </div>
                 </div>
-                <h3 className="font-semibold text-gray-900">{user.user_metadata?.full_name || 'User'}</h3>
-                <p className="text-sm text-gray-500">{user.email}</p>
               </div>
 
-              <div className="mt-6 pt-6 border-t space-y-2">
-                <Link 
-                  href="/profile" 
-                  className="flex items-center gap-3 px-4 py-2.5 bg-rose-50 text-rose-700 rounded-lg transition"
-                >
+              <nav className="p-3 space-y-1">
+                <Link href="/profile" className={`${navItemCls} bg-rose-50 text-rose-700`}>
                   <User className="w-4 h-4" /> My Profile
                 </Link>
-                <Link 
-                  href="/orders" 
-                  className="flex items-center gap-3 px-4 py-2.5 text-gray-600 hover:bg-gray-50 rounded-lg transition"
-                >
+                <Link href="/orders" className={`${navItemCls} text-gray-600 hover:bg-gray-50`}>
                   <Package className="w-4 h-4" /> My Orders
+                  {orders.length > 0 && (
+                    <span className="ml-auto text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                      {orders.length}
+                    </span>
+                  )}
                 </Link>
-                <Link 
-                  href="/wishlist" 
-                  className="flex items-center gap-3 px-4 py-2.5 text-gray-600 hover:bg-gray-50 rounded-lg transition"
-                >
+                <Link href="/wishlist" className={`${navItemCls} text-gray-600 hover:bg-gray-50`}>
                   <Heart className="w-4 h-4" /> Wishlist
                 </Link>
-                <button
-                  onClick={handleLogout}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-red-600 hover:bg-red-50 rounded-lg transition"
-                >
+                <button onClick={handleLogout} className={`${navItemCls} text-red-600 hover:bg-red-50`}>
                   <LogOut className="w-4 h-4" /> Logout
                 </button>
+              </nav>
+            </div>
+          </aside>
+
+          {/* Content */}
+          <div className="lg:col-span-3 space-y-6">
+            {/* Stats row */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div className="bg-white rounded-2xl shadow-sm border p-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+                    <ShoppingBag className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{orders.length}</p>
+                    <p className="text-xs text-gray-500">Total Orders</p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border p-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{user.user_metadata?.phone || '—'}</p>
+                    <p className="text-xs text-gray-500">Phone</p>
+                  </div>
+                </div>
+              </div>
+              <div className="col-span-2 sm:col-span-1 bg-white rounded-2xl shadow-sm border p-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{user.email}</p>
+                    <p className="text-xs text-gray-500">Email</p>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Profile Content */}
-          <div className="md:col-span-2">
-            {/* Profile Info */}
-            <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
-              <div className="flex justify-between items-center mb-4">
+            {/* Personal Information */}
+            <div className="bg-white rounded-2xl shadow-sm border p-6">
+              <div className="flex justify-between items-center mb-5">
                 <h3 className="font-semibold text-gray-900">Personal Information</h3>
                 {!isEditing ? (
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="flex items-center gap-2 text-sm text-rose-600 hover:text-rose-700 transition"
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-rose-600 hover:text-rose-700 transition"
                   >
-                    <Edit2 className="w-4 h-4" /> Edit
+                    <Edit2 className="w-4 h-4" /> Edit Profile
                   </button>
                 ) : (
                   <button
@@ -223,7 +270,7 @@ export default function ProfilePage() {
                       setName(user.user_metadata?.full_name || '');
                       setPhone(user.user_metadata?.phone || '');
                     }}
-                    className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition"
+                    className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition"
                   >
                     <X className="w-4 h-4" /> Cancel
                   </button>
@@ -231,19 +278,14 @@ export default function ProfilePage() {
               </div>
 
               {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
-                  {error}
-                </div>
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">{error}</div>
               )}
-
               {success && (
-                <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-600 rounded-lg text-sm">
-                  {success}
-                </div>
+                <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-600 rounded-lg text-sm">{success}</div>
               )}
 
               {isEditing ? (
-                <form onSubmit={handleUpdateProfile} className="space-y-4">
+                <form onSubmit={handleUpdateProfile} className="space-y-4 max-w-md">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
                     <input
@@ -277,71 +319,102 @@ export default function ProfilePage() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="bg-rose-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-rose-700 transition disabled:opacity-50 flex items-center gap-2"
+                    className="bg-rose-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-rose-700 transition disabled:opacity-50 inline-flex items-center gap-2"
                   >
-                    {loading ? 'Saving...' : <><Check className="w-4 h-4" /> Save Changes</>}
+                    {loading ? 'Saving...' : (<><Check className="w-4 h-4" /> Save Changes</>)}
                   </button>
                 </form>
               ) : (
-                <div className="space-y-3 text-sm">
-                  <div className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition">
-                    <User className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-600">Name:</span>
-                    <span className="font-medium text-gray-900">{user.user_metadata?.full_name || 'Not set'}</span>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="flex items-center gap-3 p-3 rounded-xl border border-gray-100">
+                    <User className="w-4 h-4 text-gray-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500">Name</p>
+                      <p className="font-medium text-gray-900 truncate">{user.user_metadata?.full_name || 'Not set'}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition">
-                    <Mail className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-600">Email:</span>
-                    <span className="font-medium text-gray-900">{user.email}</span>
+                  <div className="flex items-center gap-3 p-3 rounded-xl border border-gray-100">
+                    <Mail className="w-4 h-4 text-gray-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500">Email</p>
+                      <p className="font-medium text-gray-900 truncate">{user.email}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition">
-                    <Phone className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-600">Phone:</span>
-                    <span className="font-medium text-gray-900">{user.user_metadata?.phone || 'Not set'}</span>
+                  <div className="flex items-center gap-3 p-3 rounded-xl border border-gray-100">
+                    <Phone className="w-4 h-4 text-gray-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500">Phone</p>
+                      <p className="font-medium text-gray-900 truncate">{user.user_metadata?.phone || 'Not set'}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition">
-                    <ShoppingBag className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-600">Total Orders:</span>
-                    <span className="font-medium text-gray-900">{orders.length}</span>
+                  <div className="flex items-center gap-3 p-3 rounded-xl border border-gray-100">
+                    <ShoppingBag className="w-4 h-4 text-gray-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500">Total Orders</p>
+                      <p className="font-medium text-gray-900">{orders.length}</p>
+                    </div>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Recent Orders */}
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <div className="flex justify-between items-center mb-4">
+            <div className="bg-white rounded-2xl shadow-sm border p-6">
+              <div className="flex justify-between items-center mb-5">
                 <h3 className="font-semibold text-gray-900">Recent Orders</h3>
                 {orders.length > 0 && (
-                  <Link href="/orders" className="text-sm text-rose-600 hover:text-rose-700 transition">
-                    View All →
+                  <Link href="/orders" className="inline-flex items-center gap-1 text-sm font-medium text-rose-600 hover:text-rose-700 transition">
+                    View All <ChevronRight className="w-4 h-4" />
                   </Link>
                 )}
               </div>
 
               {orders.length === 0 ? (
-                <div className="text-center py-8">
-                  <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-gray-500">No orders yet</p>
-                  <Link href="/shop" className="text-sm text-rose-600 hover:text-rose-700 mt-2 inline-block transition">
-                    Start Shopping →
+                <div className="text-center py-10">
+                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-4">
+                    <Package className="w-8 h-8 text-gray-300" />
+                  </div>
+                  <p className="font-medium text-gray-900">No orders yet</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Explore our collection and place your first order.
+                  </p>
+                  <Link
+                    href="/shop"
+                    className="inline-block mt-5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                  >
+                    Start Shopping
                   </Link>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {orders.slice(0, 3).map((order) => (
-                    <div key={order.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 transition">
-                      <div>
-                        <p className="font-semibold text-sm text-gray-900">#{order.id}</p>
-                        <p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleDateString()}</p>
+                <div className="divide-y divide-gray-100">
+                  {orders.map((order) => (
+                    <div key={order.id} className="py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <Link
+                          href={`/orders/${order.id}`}
+                          className="font-semibold text-sm text-gray-900 hover:text-rose-600 transition"
+                        >
+                          {order.order_number}
+                        </Link>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {new Date(order.created_at).toLocaleDateString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })}
+                        </p>
                       </div>
-                      <div>
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                          {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
-                        </span>
-                      </div>
-                      <div>
-                        <p className="font-bold text-rose-600">₹{order.total.toLocaleString()}</p>
+                      <span className={`inline-flex w-fit px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}>
+                        {statusLabel(order.status)}
+                      </span>
+                      <div className="flex items-center justify-between sm:justify-end gap-4 sm:w-auto">
+                        <p className="font-bold text-gray-900">₹{Number(order.total_amount).toLocaleString('en-IN')}</p>
+                        <Link
+                          href={`/orders/${order.id}`}
+                          className="inline-flex items-center gap-1 text-sm font-medium text-rose-600 hover:text-rose-700 transition"
+                        >
+                          View Details <ChevronRight className="w-4 h-4" />
+                        </Link>
                       </div>
                     </div>
                   ))}

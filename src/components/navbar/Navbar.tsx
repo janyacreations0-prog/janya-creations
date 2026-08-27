@@ -179,80 +179,86 @@ export default function Navbar({ categories }: NavbarProps) {
           </div>
 
           {/* Right Icons */}
-          <div className="flex items-center space-x-5">
+          <div className="flex items-center gap-0.5 sm:gap-1">
             {/* User Section - Dynamic based on login state */}
             {session ? (
-              <div className="flex items-center space-x-3">
+              <>
                 {/* Profile Link */}
                 <Link
                   href="/profile"
-                  className="hidden sm:flex flex-col items-center text-gray-600 hover:text-rose-600 text-xs"
+                  className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                  aria-label="Profile"
                 >
                   <UserCircle className="w-5 h-5" />
-                  <span className="mt-1">Profile</span>
+                  <span className="text-[10px] font-medium mt-0.5">Profile</span>
                 </Link>
 
                 {/* Admin Link - Only show if user is admin */}
                 {isAdmin && (
                   <Link
                     href="/admin"
-                    className="hidden sm:flex flex-col items-center text-rose-600 hover:text-rose-700 text-xs"
+                    className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    aria-label="Admin"
                   >
                     <Shield className="w-5 h-5" />
-                    <span className="mt-1">Admin</span>
+                    <span className="text-[10px] font-medium mt-0.5">Admin</span>
                   </Link>
                 )}
 
                 {/* Logout Button */}
                 <button
                   onClick={handleLogout}
-                  className="hidden sm:flex flex-col items-center text-gray-600 hover:text-rose-600 text-xs"
+                  className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                  aria-label="Logout"
                 >
                   <LogOut className="w-5 h-5" />
-                  <span className="mt-1">Logout</span>
+                  <span className="text-[10px] font-medium mt-0.5">Logout</span>
                 </button>
-              </div>
+              </>
             ) : (
               // Login Link - For guest users
               <Link
                 href="/login"
-                className="hidden sm:flex flex-col items-center text-gray-600 hover:text-rose-600 text-xs"
+                className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                aria-label="Login"
               >
                 <User className="w-5 h-5" />
-                <span className="mt-1">Login</span>
+                <span className="text-[10px] font-medium mt-0.5">Login</span>
               </Link>
             )}
 
             {/* Wishlist */}
             <Link
               href="/wishlist"
-              className="flex flex-col items-center text-gray-600 hover:text-rose-600 text-xs relative"
+              className="flex flex-col items-center justify-center w-11 sm:w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+              aria-label="Wishlist"
             >
-              <div className="relative">
+              <span className="relative">
                 <Heart className="w-5 h-5" />
                 {wishlistCount > 0 && (
                   <span className="absolute -top-1.5 -right-2 bg-rose-600 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
                     {wishlistCount}
                   </span>
                 )}
-              </div>
-              <span className="hidden sm:inline mt-1">Wishlist</span>
+              </span>
+              <span className="hidden sm:inline text-[10px] font-medium mt-0.5">Wishlist</span>
             </Link>
 
             {/* Cart */}
             <Link
               href="/cart"
-              className="flex flex-col items-center text-gray-600 hover:text-rose-600 text-xs relative"
+              className="flex flex-col items-center justify-center w-11 sm:w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+              aria-label="Bag"
             >
-              <div className="relative">
+              <span className="relative">
                 <ShoppingBag className="w-5 h-5" />
                 {cartCount > 0 && (
                   <span className="absolute -top-1.5 -right-2 bg-rose-600 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
                     {cartCount}
                   </span>
                 )}
-              </div>
-              <span className="hidden sm:inline mt-1">Bag</span>
+              </span>
+              <span className="hidden sm:inline text-[10px] font-medium mt-0.5">Bag</span>
             </Link>
           </div>
         </div>

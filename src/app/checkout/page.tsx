@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useCart } from '@/context/CartContext';
 import { createClient } from '@/lib/supabase/client';
 import { createOrder } from '@/lib/order-actions';
+import { saveCheckoutAddress } from '@/lib/address-actions';
 import { ArrowLeft, Home, Lock, ShoppingBag } from 'lucide-react';
 
 export default function CheckoutPage() {
@@ -15,6 +16,9 @@ export default function CheckoutPage() {
   const [session, setSession] = useState<{ user: { id: string; email?: string } | null } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState<any[]>([]);
+  const [saveAddress, setSaveAddress] = useState(false);
+  const [selectedSavedAddress, setSelectedSavedAddress] = useState('');
 
   const [form, setForm] = useState({
     name: '',
@@ -30,9 +34,35 @@ export default function CheckoutPage() {
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data }) => {
-      setSession({ user: data.session?.user ?? null });
+      const user = data.session?.user ?? null;
+      setSession({ user });
+      if (user) {
+        supabase
+          .from('addresses')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .then(({ data: addrs }) => {
+            setSavedAddresses(addrs || []);
+          });
+      }
     });
   }, []);
+
+  const applySavedAddress = (id: string) => {
+    const addr = savedAddresses.find((a) => String(a.id) === String(id));
+    if (!addr) return;
+    setSelectedSavedAddress(id);
+    setForm((f) => ({
+      ...f,
+      name: addr.full_name,
+      phone: addr.phone,
+      address_line1: addr.line1,
+      address_line2: addr.line2 || '',
+      city: addr.city,
+      state: addr.state,
+      pincode: addr.pincode,
+    }));
+  };
 
   const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -45,6 +75,20 @@ export default function CheckoutPage() {
       return;
     }
     setSubmitting(true);
+
+    // Save the address if requested (fire-and-forget safe; never blocks order)
+    if (saveAddress) {
+      saveCheckoutAddress({
+        name: form.name,
+        phone: form.phone,
+        line1: form.address_line1,
+        line2: form.address_line2,
+        city: form.city,
+        state: form.state,
+        pincode: form.pincode,
+        country: 'India',
+      }).catch(() => {});
+    }
 
     const result = await createOrder({
       name: form.name,
@@ -95,7 +139,7 @@ export default function CheckoutPage() {
             Your cart is saved. Sign in to place your order — your guest cart will merge automatically.
           </p>
           <Link
-            href="/login"
+            href="/login?next=/checkout"
             className="inline-block w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm rounded-lg transition-colors"
           >
             Sign In
@@ -167,6 +211,24 @@ export default function CheckoutPage() {
 
             <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-4">
               <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Shipping Address</h2>
+              {savedAddresses.length > 0 && (
+                <div>
+                  <label className={labelCls} htmlFor="co-saved">Use a saved address</label>
+                  <select
+                    id="co-saved"
+                    value={selectedSavedAddress}
+                    onChange={(e) => applySavedAddress(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select a saved address...</option>
+                    {savedAddresses.map((a: any) => (
+                      <option key={a.id} value={a.id}>
+                        {a.full_name} — {a.line1}, {a.city}, {a.pincode}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
                   <label className={labelCls} htmlFor="co-a1">Address Line 1 *</label>
@@ -193,6 +255,15 @@ export default function CheckoutPage() {
                   <input id="co-country" type="text" value="India" readOnly className={`${inputCls} bg-gray-100 text-gray-600`} />
                 </div>
               </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={saveAddress}
+                  onChange={(e) => setSaveAddress(e.target.checked)}
+                  className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                />
+                Save this address for future orders
+              </label>
             </div>
 
             <button

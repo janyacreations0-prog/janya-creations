@@ -8,12 +8,21 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico / logo.svg (favicon / app logo)
-     * - public assets (images, fonts, etc.)
+     * Session refresh only runs where an authenticated session is actually
+     * relevant — avoiding a Supabase auth round-trip on public storefront
+     * pages (/, /shop, /category, /products, policies, etc.).
+     *
+     * Public pages render from anonymous/RLS data and manage auth entirely
+     * in the browser, so they skip the middleware entirely.
      */
-    '/((?!_next/static|_next/image|favicon.ico|logo.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/admin/:path*',
+    '/orders/:path*',
+    '/profile/:path*',
+    '/checkout',
+    '/login',
+    '/forgot-password',
+    '/reset-password',
+    '/auth/:path*',
+    '/api/:path*',
   ],
 };

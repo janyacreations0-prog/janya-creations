@@ -26,6 +26,24 @@ export default function CustomerLogin() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
+  // Preserve checkout intent: ?next=/checkout set by the checkout page.
+  // Only local paths are honored (prevents open redirects).
+  const getNext = (): string | null => {
+    if (typeof window === 'undefined') return null;
+    const n = new URLSearchParams(window.location.search).get('next');
+    return n && n.startsWith('/') ? n : null;
+  };
+
+  const redirectAfterAuth = () => {
+    router.push(getNext() || '/');
+  };
+
+  const buildEmailRedirect = (): string => {
+    const base = `${window.location.origin}/auth/callback`;
+    const next = getNext();
+    return next ? `${base}?next=${encodeURIComponent(next)}` : base;
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -70,7 +88,7 @@ export default function CustomerLogin() {
             full_name: name,
             phone: mobile,
           },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: buildEmailRedirect(),
         },
       });
 
@@ -126,7 +144,7 @@ export default function CustomerLogin() {
         return;
       }
 
-      router.push('/');
+      redirectAfterAuth();
     } catch (error: any) {
       setError(error.message || 'Login failed. Please try again.');
     } finally {
@@ -149,7 +167,7 @@ export default function CustomerLogin() {
         type: 'signup',
         email: email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: buildEmailRedirect(),
         },
       });
 

@@ -9,6 +9,7 @@ import {
 } from '@/lib/categories';
 import ProductCard from '@/components/product/ProductCard';
 import ShopFilters, { type Facet } from '@/components/shop/ShopFilters';
+import Pagination from '@/components/shop/Pagination';
 import type { Category, CategoryAttributeDefinition } from '@/types';
 
 interface ShopPageProps {
@@ -65,40 +66,27 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
     }
   }
 
-  // --- Build the server-side query (search / category / price / sort) ---
-  let query = supabase.from('products').select('*');
-
-  if (q) {
-    query = query.ilike('name', `%${q}%`);
-  }
-  if (category && !categoryNotFound) {
-    // Applies the resolved leaf set; an empty set (e.g. invalid subcategory
-    // under a valid category) correctly returns no products.
-    query = query.in('category_id', categoryIds);
-  }
-  if (categoryNotFound) {
-    query = query.in('category_id', ['00000000-0000-0000-0000-000000000000']);
-  }
+  // --- Pagination (database-level, 24 per page) ---
+  const PAGE_SIZE = 24;
+  const currentPage = Math.max(1, parseInt(first(sp.page), 10) || 1);
+  const from = (currentPage - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
 
   const min = Number(minPrice);
   const max = Number(maxPrice);
-  if (minPrice !== '' && !Number.isNaN(min) && min >= 0) {
-    query = query.gte('price', min);
-  }
-  if (maxPrice !== '' && !Number.isNaN(max) && max >= 0) {
-    query = query.lte('price', max);
-  }
 
-  const sortCfg = SORT_ORDERS[sort] ?? SORT_ORDERS.newest;
-  query = query.order(sortCfg.column, { ascending: sortCfg.ascending });
+  // Base filters (search / category / price) — shared by count, page and facets
+  const applyBaseFilters = (builder: any) => {
+    let b = builder;
+    if (q) b = b.ilike('name', `%${q}%`);
+    if (category && !categoryNotFound) b = b.in('category_id', categoryIds);
+    if (categoryNotFound) b = b.in('category_id', ['00000000-0000-0000-0000-000000000000']);
+    if (minPrice !== '' && !Number.isNaN(min) && min >= 0) b = b.gte('price', min);
+    if (maxPrice !== '' && !Number.isNaN(max) && max >= 0) b = b.lte('price', max);
+    return b;
+  };
 
-  const { data: products, error } = await query;
-  const all = (products as any[]) || [];
-  if (error) {
-    console.error('Error fetching products in shop:', error.message);
-  }
-
-  // --- Effective attribute schema for the active category (parent merged) ---
+  // Effective attribute schema for the active category (parent merged)
   let schema: CategoryAttributeDefinition[] = [];
   if (activeSubcategory) {
     schema = mergeAttributeSchemas(
@@ -109,45 +97,69 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
     schema = activeCategory.attribute_schema ?? [];
   }
 
-  // --- Apply attribute filters (JS over the category/search/price scoped set) ---
+  // Attribute filters applied at the DATABASE level (JSONB containment).
   const attrKeys = schema.map((d) => d.key);
-  let filtered = all;
-  for (const key of attrKeys) {
-    const param = sp[key];
-    if (!param) continue;
-    const values = Array.isArray(param) ? param : [param];
-    const def = schema.find((d) => d.key === key);
-    if (!def) continue;
-
-    filtered = filtered.filter((p) => {
-      const val = (p.attributes ?? {})[key];
+  const applyAttrFilters = (builder: any) => {
+    let b = builder;
+    for (const key of attrKeys) {
+      const param = sp[key];
+      if (!param) continue;
+      const values = Array.isArray(param) ? param : [param];
+      const def = schema.find((d) => d.key === key);
+      if (!def) continue;
       if (def.type === 'boolean') {
-        const wantTrue = values.includes('true');
-        return val === true === wantTrue;
+        b = b.contains('attributes', { [key]: values.includes('true') });
+      } else if (values.length === 1) {
+        b = b.contains('attributes', { [key]: values[0] });
+      } else {
+        b = b.or(
+          values.map((v) => `attributes.cs.${JSON.stringify({ [key]: v })}`).join(',')
+        );
       }
-      if (def.type === 'multi-select') {
-        const arr = Array.isArray(val)
-          ? val.map(String)
-          : val !== undefined && val !== null
-            ? [String(val)]
-            : [];
-        return values.some((v) => arr.some((a) => a.toLowerCase() === v.toLowerCase()));
-      }
-      if (typeof val !== 'string' && typeof val !== 'number') return false;
-      return values.some((v) => String(val).toLowerCase() === v.toLowerCase());
-    });
-  }
+    }
+    return b;
+  };
+
+  // Total matching count (attribute-filtered) for pagination.
+  const { count } = await applyAttrFilters(
+    applyBaseFilters(supabase.from('products').select('id', { count: 'exact', head: true }))
+  );
+
+  // Facet data: only the attributes column, over the base scope (before
+  // attribute selection) so every facet reflects the full matching set.
+  const { data: facetRows } = await applyBaseFilters(
+    supabase.from('products').select('attributes')
+  );
+
+  // Current page: projected listing fields, sorted, paginated at DB level.
+  const sortCfg = SORT_ORDERS[sort] ?? SORT_ORDERS.newest;
+  const pageQuery = applyAttrFilters(
+    applyBaseFilters(
+      supabase
+        .from('products')
+        .select(
+          'id, title, name, price, original_price, category_id, category, image_thumbnail, image_url, badge, stock_quantity, created_at'
+        )
+    )
+  );
+  const { data: products } = await pageQuery
+    .order(sortCfg.column, { ascending: sortCfg.ascending })
+    .range(from, to);
+  const pageProducts = (products as any[]) || [];
+  const totalCount = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   // --- Compute facets (select/multi-select/boolean) from the scoped set ---
+  const allAttrRows = (facetRows as any[]) || [];
   const facets: Facet[] = schema
     .filter((d) => d.type === 'select' || d.type === 'multi-select' || d.type === 'boolean')
     .map((d) => {
       if (d.type === 'boolean') {
-        const hasTrue = all.some((p) => (p.attributes ?? {})[d.key] === true);
+        const hasTrue = allAttrRows.some((p) => (p.attributes ?? {})[d.key] === true);
         return { def: d, values: hasTrue ? ['true'] : [] };
       }
       const set = new Set<string>();
-      all.forEach((p) => {
+      allAttrRows.forEach((p) => {
         const val = (p.attributes ?? {})[d.key];
         if (d.type === 'multi-select' && Array.isArray(val)) {
           val.forEach((v) => set.add(String(v)));
@@ -199,7 +211,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
         />
 
         <div className="lg:col-span-3">
-          {filtered.length === 0 ? (
+          {pageProducts.length === 0 ? (
             <div className="text-center py-20">
               <p className="text-gray-500 text-lg">No products found.</p>
               {q && (
@@ -210,11 +222,19 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
               <LinkReset />
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-              {filtered.map((product: any) => (
-                <ProductCard key={product.id} product={toProductCard(product)} />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+                {pageProducts.map((product: any) => (
+                  <ProductCard key={product.id} product={toProductCard(product)} />
+                ))}
+              </div>
+              <Pagination
+                page={currentPage}
+                totalPages={totalPages}
+                basePath="/shop"
+                params={sp}
+              />
+            </>
           )}
         </div>
       </div>

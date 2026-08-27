@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import ImageUpload from '@/components/admin/ImageUpload';
+import ProductImageGallery, { type GalleryImage } from '@/components/admin/ProductImageGallery';
 import { 
   ShieldCheck, Package, ShoppingBag, LogOut, TrendingUp,
-  Plus, Trash2, Edit2, Eye, Search, ChevronLeft, ChevronRight 
+  Plus, Trash2, Edit2, Eye, Search, ChevronLeft, ChevronRight,
+  IndianRupee, Users, AlertTriangle
 } from 'lucide-react';
 import { saveProduct } from '@/lib/admin-actions';
 import { mergeAttributeSchemas } from '@/lib/categories';
@@ -33,30 +34,11 @@ interface Product {
   created_at?: string;
 }
 
-export default function AdminPage() {
-  const router = useRouter();
-  const supabase = createClient();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isAddingProduct, setIsAddingProduct] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+const ITEMS_PER_PAGE = 20;
+const AUTO_BADGE_PATTERN = /^\d+\s*%\s*OFF$/i;
 
-  // 🔍 Search & Filter States
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
-
-  // Categories (dynamic, database-backed)
-  const [categories, setCategories] = useState<any[]>([]);
-
-  // 📄 Pagination States
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
-
-  // Form state
-  const [formData, setFormData] = useState({
+function emptyForm() {
+  return {
     name: '',
     price: '',
     original_price: '',
@@ -69,12 +51,47 @@ export default function AdminPage() {
     image_large: '',
     image_medium: '',
     image_thumbnail: '',
+    gallery: [] as GalleryImage[],
     attributes: {} as Record<string, unknown>,
-  });
+  };
+}
 
-  // Stats (only real counts; revenue/orders live on /admin/reports)
-  const [stats, setStats] = useState({
-    totalProducts: 0
+export default function AdminPage() {
+  const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // 🔍 Search & Filter States
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+
+  // Categories (dynamic, database-backed)
+  const [categories, setCategories] = useState<any[]>([]);
+
+  // 📄 Database-level Pagination States
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // Form state
+  const [formData, setFormData] = useState(emptyForm());
+
+  // Real ecommerce KPIs (fetched from live data — never dummy)
+  const [kpis, setKpis] = useState({
+    totalRevenue: 0,
+    orders: 0,
+    paidOrders: 0,
+    pendingOrders: 0,
+    products: 0,
+    lowStock: 0,
+    outOfStock: 0,
+    customers: 0,
   });
 
   // Derived category helpers
@@ -134,6 +151,20 @@ export default function AdminPage() {
     );
   }, [categories, formData.subcategoryId, formData.categoryId]);
 
+  // Live discount % derived from MRP and selling price
+  const discountPreview = useMemo(() => {
+    const mrp = Number(formData.original_price) || 0;
+    const sale = Number(formData.price) || 0;
+    if (mrp > 0 && sale > 0 && sale < mrp) {
+      const pct = Math.round(((mrp - sale) / mrp) * 100);
+      return { pct, save: mrp - sale, invalid: false };
+    }
+    if (mrp > 0 && sale > mrp) {
+      return { pct: 0, save: 0, invalid: true };
+    }
+    return { pct: 0, save: 0, invalid: false };
+  }, [formData.price, formData.original_price]);
+
   const handleAttributeChange = (key: string, value: unknown) => {
     setFormData((f) => ({
       ...f,
@@ -141,9 +172,35 @@ export default function AdminPage() {
     }));
   };
 
+  // When price/MRP change, auto-fill the discount badge (unless the admin set
+  // a custom badge that isn't the auto "X% OFF" pattern).
+  const handlePriceChange = (field: 'price' | 'original_price', value: string) => {
+    setFormData((f) => {
+      const next = { ...f, [field]: value };
+      const mrp = Number(next.original_price) || 0;
+      const sale = Number(next.price) || 0;
+      const currentBadge = (next.badge || '').trim();
+      const isAuto = !currentBadge || AUTO_BADGE_PATTERN.test(currentBadge);
+      if (isAuto) {
+        if (mrp > 0 && sale > 0 && sale < mrp) {
+          next.badge = `${Math.round(((mrp - sale) / mrp) * 100)}% OFF`;
+        } else {
+          next.badge = '';
+        }
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     checkAuth();
   }, []);
+
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -151,8 +208,8 @@ export default function AdminPage() {
       router.push('/admin/login');
     } else {
       setIsAuthLoading(false);
-      loadProducts();
       loadCategories();
+      loadKpis();
     }
   };
 
@@ -170,47 +227,80 @@ export default function AdminPage() {
     }
   };
 
-  const loadProducts = async () => {
+  // Real KPIs computed from live tables (orders/products/profiles).
+  const loadKpis = useCallback(async () => {
+    try {
+      const [ordersRes, productsRes, customersRes] = await Promise.all([
+        supabase.from('orders').select('id, total_amount, payment_status'),
+        supabase.from('products').select('id, stock_quantity'),
+        supabase.from('profiles').select('id').eq('role', 'customer'),
+      ]);
+      const orders = (ordersRes.data || []) as any[];
+      const paidOrders = orders.filter((o: any) => o.payment_status === 'paid');
+      const pendingOrders = orders.filter((o: any) => o.payment_status === 'pending');
+      const revenue = paidOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
+      const products = (productsRes.data || []) as any[];
+      setKpis({
+        totalRevenue: Math.round(revenue),
+        orders: orders.length,
+        paidOrders: paidOrders.length,
+        pendingOrders: pendingOrders.length,
+        products: products.length,
+        lowStock: products.filter((p: any) => (p.stock_quantity ?? 0) > 0 && (p.stock_quantity ?? 0) <= 5).length,
+        outOfStock: products.filter((p: any) => (p.stock_quantity ?? 0) <= 0).length,
+        customers: customersRes.data?.length || 0,
+      });
+    } catch (err: any) {
+      console.error('Error loading KPIs:', err);
+    }
+  }, [supabase]);
+
+  // Database-level paginated listing with search + category filtering applied
+  // on the server (Supabase) — no client-side slicing of a full table.
+  const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('products')
-        .select('*')
+        .select('*', { count: 'exact' })
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      const q = debouncedSearch.trim();
+      if (q) {
+        query = query.or(`name.ilike.%${q}%,title.ilike.%${q}%`);
+      }
 
+      if (selectedCategory !== 'All') {
+        const topId = selectedCategory;
+        const childIds = categories
+          .filter((c: any) => String(c.parent_id) === topId)
+          .map((c: any) => String(c.id));
+        query = query.in('category_id', [topId, ...childIds]);
+      }
+
+      const from = (currentPage - 1) * ITEMS_PER_PAGE;
+      const { data, count, error } = await query.range(from, from + ITEMS_PER_PAGE - 1);
+
+      if (error) throw error;
       setProducts(data || []);
-      setStats(prev => ({ ...prev, totalProducts: data?.length || 0 }));
+      setTotalCount(count || 0);
     } catch (err: any) {
       console.error('Error loading products:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [supabase, debouncedSearch, selectedCategory, currentPage, categories]);
+
+  useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push('/admin/login');
   };
-
-  // 1. Handle Search & Filter logic
-  const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
-      const matchesSearch = (product.name || '').toLowerCase().includes(searchQuery.toLowerCase());
-      let matchesCategory = true;
-      if (selectedCategory !== 'All') {
-        const cat = categories.find((c: any) => String(c.id) === String(product.category_id));
-        if (!cat) {
-          matchesCategory = false;
-        } else {
-          const topId = cat.parent_id ? String(cat.parent_id) : String(cat.id);
-          matchesCategory = topId === selectedCategory;
-        }
-      }
-      return matchesSearch && matchesCategory;
-    });
-  }, [products, searchQuery, selectedCategory, categories]);
 
   // Resolve a product's category/subcategory names from category_id
   const categoryInfoFor = (product: Product) => {
@@ -223,13 +313,6 @@ export default function AdminPage() {
     }
     return { top: cat.name, sub: null };
   };
-
-  // 2. Handle Pagination calculation
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage) || 1;
-  const paginatedProducts = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredProducts.slice(start, start + itemsPerPage);
-  }, [filteredProducts, currentPage]);
 
   // 3. Status Toggle Handler (Supabase Update)
   const handleToggleStock = async (product: Product) => {
@@ -251,7 +334,7 @@ export default function AdminPage() {
   };
 
   // 4. Populate form for Editing
-  const handleStartEdit = (product: Product) => {
+  const handleStartEdit = async (product: Product) => {
     setEditingProduct(product);
     setIsAddingProduct(true);
 
@@ -282,6 +365,27 @@ export default function AdminPage() {
       });
     }
 
+    // Load the product's gallery images (up to 4)
+    let gallery: GalleryImage[] = [];
+    try {
+      const { data: galleryRows, error: gErr } = await supabase
+        .from('product_images')
+        .select('id, original_url, large_url, medium_url, thumbnail_url')
+        .eq('product_id', product.id)
+        .order('position', { ascending: true });
+      if (!gErr && galleryRows) {
+        gallery = galleryRows.map((r: any) => ({
+          key: `${r.id}`,
+          original: r.original_url || '',
+          large: r.large_url || '',
+          medium: r.medium_url || '',
+          thumbnail: r.thumbnail_url || '',
+        }));
+      }
+    } catch {
+      // gallery stays empty — legacy single image columns still shown below
+    }
+
     setFormData({
       name: product.name || '',
       price: product.price ? String(product.price) : '',
@@ -295,19 +399,29 @@ export default function AdminPage() {
       image_large: product.image_large || '',
       image_medium: product.image_medium || '',
       image_thumbnail: product.image_thumbnail || '',
+      gallery,
       attributes,
     });
     window.scrollTo({ top: 300, behavior: 'smooth' });
   };
 
   // 5. Add / Update Product Submit
-  const handleSaveProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveProduct = async (e?: React.FormEvent, keepOpen = false) => {
+    e?.preventDefault();
     setError('');
     setSuccess('');
     setLoading(true);
 
     try {
+      // Reject selling price exceeding MRP before hitting the server.
+      const mrpForSave = formData.original_price ? Number(formData.original_price) : 0;
+      const saleForSave = Number(formData.price) || 0;
+      if (mrpForSave > 0 && saleForSave > mrpForSave) {
+        setError('Selling price cannot be greater than the original price (MRP).');
+        setLoading(false);
+        return;
+      }
+
       // The product's category_id is the LEAF (subcategory if chosen, else the
       // selected top-level category). Legacy `category` text is only written on
       // create (not overwritten on edit).
@@ -339,6 +453,9 @@ export default function AdminPage() {
         image_large: formData.image_large || '',
         image_medium: formData.image_medium || '',
         image_thumbnail: formData.image_thumbnail || '',
+        gallery: formData.gallery.map(({ original, large, medium, thumbnail }) => ({
+          original, large, medium, thumbnail,
+        })),
         attributes,
         legacyCategoryName: editingProduct ? undefined : topCategory?.name,
       });
@@ -351,24 +468,15 @@ export default function AdminPage() {
 
       setSuccess(editingProduct ? '✅ Product updated successfully!' : '✅ Product added successfully!');
 
-      setFormData({
-        name: '',
-        price: '',
-        original_price: '',
-        badge: '',
-        categoryId: '',
-        subcategoryId: '',
-        stock_quantity: '10',
-        description: '',
-        image_url: '',
-        image_large: '',
-        image_medium: '',
-        image_thumbnail: '',
-        attributes: {},
-      });
-      setIsAddingProduct(false);
-      setEditingProduct(null);
-      await loadProducts();
+      setFormData(emptyForm());
+      if (keepOpen) {
+        // Stay in the form for rapid entry of the next product.
+        setEditingProduct(null);
+      } else {
+        setIsAddingProduct(false);
+        setEditingProduct(null);
+      }
+      await Promise.all([loadProducts(), loadKpis()]);
 
     } catch (err: any) {
       setError(err.message || 'Failed to save product');
@@ -389,7 +497,7 @@ export default function AdminPage() {
       if (error) throw error;
 
       setSuccess('✅ Product deleted successfully!');
-      await loadProducts();
+      await Promise.all([loadProducts(), loadKpis()]);
 
     } catch (err: any) {
       setError(err.message || 'Failed to delete product');
@@ -403,6 +511,8 @@ export default function AdminPage() {
       </div>
     );
   }
+
+  const money = (n: number) => `₹${(n || 0).toLocaleString('en-IN')}`;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -448,22 +558,52 @@ export default function AdminPage() {
       </div>
 
       <div className="max-w-7xl mx-auto w-full px-4 py-8 flex-1 space-y-6">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        {/* Real ecommerce KPI cards — live data, no placeholders */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-gray-500 font-semibold uppercase">Total Products</p>
-              <Package className="w-5 h-5 text-rose-600" />
+              <p className="text-xs text-gray-500 font-semibold uppercase">Total Revenue</p>
+              <IndianRupee className="w-5 h-5 text-emerald-500" />
             </div>
-            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.totalProducts}</p>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{money(kpis.totalRevenue)}</p>
+            <p className="text-[11px] text-gray-400 mt-1">{kpis.paidOrders} paid order{kpis.paidOrders !== 1 ? 's' : ''}</p>
           </div>
 
           <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-gray-500 font-semibold uppercase">Total Products</p>
-              <Package className="w-5 h-5 text-gray-600" />
+              <p className="text-xs text-gray-500 font-semibold uppercase">Orders</p>
+              <ShoppingBag className="w-5 h-5 text-rose-600" />
             </div>
-            <p className="text-2xl font-bold text-gray-900 mt-2">{stats.totalProducts}</p>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{kpis.orders}</p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {kpis.pendingOrders} pending · {kpis.paidOrders} paid
+            </p>
+          </div>
+
+          <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-500 font-semibold uppercase">Products</p>
+              <Package className="w-5 h-5 text-indigo-500" />
+            </div>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{kpis.products}</p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {kpis.lowStock > 0 && (
+                <span className="inline-flex items-center gap-1 text-amber-600">
+                  <AlertTriangle className="w-3 h-3" /> {kpis.lowStock} low
+                </span>
+              )}{' '}
+              {kpis.outOfStock > 0 && <span className="text-rose-500">{kpis.outOfStock} out</span>}
+              {kpis.lowStock === 0 && kpis.outOfStock === 0 && 'Healthy stock'}
+            </p>
+          </div>
+
+          <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-500 font-semibold uppercase">Customers</p>
+              <Users className="w-5 h-5 text-blue-500" />
+            </div>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{kpis.customers}</p>
+            <p className="text-[11px] text-gray-400 mt-1">Registered customers</p>
           </div>
 
           <Link
@@ -487,11 +627,7 @@ export default function AdminPage() {
               onClick={() => {
                 setIsAddingProduct(!isAddingProduct);
                 setEditingProduct(null);
-                setFormData({
-                  name: '', price: '', original_price: '', badge: '', categoryId: '', subcategoryId: '', stock_quantity: '10',
-                  description: '', image_url: '', image_large: '', image_medium: '', image_thumbnail: '',
-                  attributes: {},
-                });
+                setFormData(emptyForm());
                 setError('');
                 setSuccess('');
               }}
@@ -519,7 +655,7 @@ export default function AdminPage() {
               <h3 className="font-semibold text-gray-900 mb-4 text-sm">
                 {editingProduct ? 'Edit Product' : 'Add New Product'}
               </h3>
-              <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <form onSubmit={(e) => handleSaveProduct(e, false)} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Product Name *</label>
                   <input
@@ -528,6 +664,7 @@ export default function AdminPage() {
                     onChange={(e) => setFormData({...formData, name: e.target.value})}
                     className="w-full p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
                     required
+                    autoFocus
                     placeholder="e.g., Handwoven Silk Saree"
                   />
                 </div>
@@ -536,7 +673,7 @@ export default function AdminPage() {
                   <input
                     type="number"
                     value={formData.price}
-                    onChange={(e) => setFormData({...formData, price: e.target.value})}
+                    onChange={(e) => handlePriceChange('price', e.target.value)}
                     className="w-full p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
                     required
                     min="0"
@@ -550,7 +687,7 @@ export default function AdminPage() {
                   <input
                     type="number"
                     value={formData.original_price}
-                    onChange={(e) => setFormData({...formData, original_price: e.target.value})}
+                    onChange={(e) => handlePriceChange('original_price', e.target.value)}
                     className="w-full p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
                     min="0"
                     placeholder="2499"
@@ -563,8 +700,21 @@ export default function AdminPage() {
                     value={formData.badge}
                     onChange={(e) => setFormData({...formData, badge: e.target.value})}
                     className="w-full p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
-                    placeholder="e.g., 40% OFF"
+                    placeholder="Auto: e.g., 40% OFF"
                   />
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    {discountPreview.invalid ? (
+                      <span className="text-rose-600 font-medium">
+                        ⚠ Selling price must be less than or equal to MRP.
+                      </span>
+                    ) : discountPreview.pct > 0 ? (
+                      <span className="text-emerald-600 font-medium">
+                        ✓ Auto: {discountPreview.pct}% OFF (save {money(discountPreview.save)})
+                      </span>
+                    ) : (
+                      'Discount % is calculated automatically from MRP & price.'
+                    )}
+                  </p>
                 </div>
                 <div className="md:col-span-2 border-t border-gray-200 pt-3 -mt-2">
                   <p className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
@@ -718,18 +868,12 @@ export default function AdminPage() {
                   </div>
                 )}
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Product Image</label>
-                  <ImageUpload
-                    onImageUploaded={(urls) => {
-                      setFormData({
-                        ...formData,
-                        image_url: urls.large,
-                        image_large: urls.large,
-                        image_medium: urls.medium,
-                        image_thumbnail: urls.thumbnail,
-                      });
-                    }}
-                    currentImage={formData.image_url}
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Product Images <span className="text-gray-400 font-normal">(up to 4)</span>
+                  </label>
+                  <ProductImageGallery
+                    images={formData.gallery}
+                    onChange={(gallery) => setFormData((f) => ({ ...f, gallery }))}
                     folder="products"
                   />
                 </div>
@@ -749,6 +893,15 @@ export default function AdminPage() {
                     className="bg-rose-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-rose-700 transition disabled:opacity-50 flex items-center gap-2"
                   >
                     {loading ? 'Saving...' : editingProduct ? 'Update Product' : 'Add Product'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveProduct(undefined, true)}
+                    disabled={loading}
+                    className="bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-emerald-700 transition disabled:opacity-50 flex items-center gap-2"
+                    title="Save this product and start entering the next one"
+                  >
+                    {loading ? 'Saving...' : 'Save & Add Another'}
                   </button>
                   <button
                     type="button"
@@ -818,8 +971,8 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs">
-                  {paginatedProducts.length > 0 ? (
-                    paginatedProducts.map((product) => {
+                  {products.length > 0 ? (
+                    products.map((product) => {
                       const isInStock = (product.stock_quantity ?? 0) > 0;
                       return (
                         <tr key={product.id} className="hover:bg-gray-50/50 transition-colors">
@@ -907,7 +1060,7 @@ export default function AdminPage() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={5} className="py-8 text-center text-gray-400 text-xs">
+                      <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
                         No products found matching your search.
                       </td>
                     </tr>
@@ -917,11 +1070,11 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* 📄 Pagination Footer */}
+          {/* 📄 Pagination Footer — database-level totals */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-gray-500">
             <span>
-              Showing {filteredProducts.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{' '}
-              {Math.min(currentPage * itemsPerPage, filteredProducts.length)} of {filteredProducts.length} items
+              Showing {totalCount === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1} to{' '}
+              {Math.min(currentPage * ITEMS_PER_PAGE, totalCount)} of {totalCount} items
             </span>
 
             <div className="flex items-center gap-2">

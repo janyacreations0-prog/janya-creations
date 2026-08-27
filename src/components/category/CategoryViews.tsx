@@ -1,22 +1,33 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import ProductCard from '@/components/product/ProductCard';
+import Pagination from '@/components/shop/Pagination';
 import { toProductCard } from '@/lib/products';
 import type { Category } from '@/types';
 
+const PAGE_SIZE = 24;
+
 /**
- * Top-level category page: header + subcategory chips + all products in the
- * category (including its subcategories).
+ * Top-level category page: header + subcategory chips + products in the
+ * category (including its subcategories), paginated at the database level.
  */
 export function TopLevelCategoryView({
   category,
   subcategories,
   products,
+  totalCount,
+  page,
+  basePath,
 }: {
   category: Category;
   subcategories: Category[];
   products: any[];
+  totalCount: number;
+  page: number;
+  basePath: string;
 }) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       <div className="mb-10">
@@ -58,14 +69,17 @@ export function TopLevelCategoryView({
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           All {category.name} Products
         </h2>
-        {products.length === 0 ? (
+        {totalCount === 0 ? (
           <p className="text-gray-500 py-12 text-center">No products in this category yet.</p>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {products.map((p: any) => (
-              <ProductCard key={p.id} product={toProductCard(p)} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              {products.map((p: any) => (
+                <ProductCard key={p.id} product={toProductCard(p)} />
+              ))}
+            </div>
+            <Pagination page={page} totalPages={totalPages} basePath={basePath} params={{}} />
+          </>
         )}
       </section>
     </main>
@@ -73,17 +87,25 @@ export function TopLevelCategoryView({
 }
 
 /**
- * Subcategory page: breadcrumb + products in the subcategory only.
+ * Subcategory page: breadcrumb + products in the subcategory only, paginated.
  */
 export function SubcategoryCategoryView({
   category,
   parent,
   products,
+  totalCount,
+  page,
+  basePath,
 }: {
   category: Category;
   parent: Category | null;
   products: any[];
+  totalCount: number;
+  page: number;
+  basePath: string;
 }) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       <nav className="text-sm text-gray-500 mb-6 flex items-center gap-1.5 flex-wrap">
@@ -105,14 +127,17 @@ export function SubcategoryCategoryView({
         <p className="text-gray-600 mb-8 max-w-2xl">{category.description}</p>
       ) : null}
 
-      {products.length === 0 ? (
+      {totalCount === 0 ? (
         <p className="text-gray-500 py-12 text-center">No products in this subcategory yet.</p>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          {products.map((p: any) => (
-            <ProductCard key={p.id} product={toProductCard(p)} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            {products.map((p: any) => (
+              <ProductCard key={p.id} product={toProductCard(p)} />
+            ))}
+          </div>
+          <Pagination page={page} totalPages={totalPages} basePath={basePath} params={{}} />
+        </>
       )}
     </main>
   );

@@ -1,56 +1,15 @@
-'use client';
-
-import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import ProductCard from '@/components/product/ProductCard';
 import ReviewsSection from '@/components/reviews/ReviewsSection';
-import { Product } from '@/types';
-import { getProducts } from '@/lib/products';
+import { getFeaturedProducts, toProductCard } from '@/lib/products';
 import { Sparkles, ShieldCheck, Truck, RefreshCw } from 'lucide-react';
 
-export default function HomePage() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+// ISR: revalidate the homepage product grid every 5 minutes. The shop/category
+// pages stay fully dynamic, so product availability is never stale for long.
+export const revalidate = 300;
 
-  useEffect(() => {
-    async function fetchProducts() {
-      try {
-        const data = await getProducts();
-        
-        // Safely map database fields with fallbacks for NULL/undefined values
-        const mappedProducts: Product[] = (data || []).map((item: any) => {
-          const safeTitle = item.title || item.name || 'Untitled Product';
-          const safeSlug = safeTitle
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '');
-
-          return {
-            id: item.id,
-            title: safeTitle,
-            slug: safeSlug || 'product',
-            price: item.original_price || item.price || 0,
-            discount_price: item.price || 0,
-            material: item.category || 'Jewellery',
-            plating: item.badge || '',
-            images: item.image_url ? [item.image_url] : ['/placeholder.jpg'],
-            stock_quantity: item.stock_quantity ?? 0,
-            in_stock: item.in_stock ?? ((item.stock_quantity ?? 0) > 0),
-            is_featured: true,
-            is_new_arrival: true,
-          };
-        });
-
-        setProducts(mappedProducts);
-      } catch (error) {
-        console.error('Failed to load products:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchProducts();
-  }, []);
+export default async function HomePage() {
+  const featured = await getFeaturedProducts(8);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -120,7 +79,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Featured Products Grid */}
+      {/* Featured Products Grid (server-rendered, 8 newest) */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 flex-1 w-full">
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -135,19 +94,11 @@ export default function HomePage() {
           </Link>
         </div>
 
-        {loading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-72 bg-gray-200 animate-pulse rounded-lg" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
-            {products.map((product) => (
-              <ProductCard key={product.id} product={product} />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+          {featured.map((p) => (
+            <ProductCard key={p.id} product={toProductCard(p)} />
+          ))}
+        </div>
       </main>
 
       {/* Customer Reviews — social proof (hidden automatically when no approved reviews) */}
