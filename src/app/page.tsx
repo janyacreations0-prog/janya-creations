@@ -1,15 +1,20 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import ProductCard from '@/components/product/ProductCard';
 import ReviewsSection from '@/components/reviews/ReviewsSection';
 import { getFeaturedProducts, toProductCard } from '@/lib/products';
-import { Sparkles, ShieldCheck, Truck, RefreshCw } from 'lucide-react';
+import { getCategoryTree } from '@/lib/categories';
+import { getReviewSummaries } from '@/lib/reviews';
+import { Sparkles, ShieldCheck, Truck, RefreshCw, ArrowRight } from 'lucide-react';
 
 // ISR: revalidate the homepage product grid every 5 minutes. The shop/category
 // pages stay fully dynamic, so product availability is never stale for long.
 export const revalidate = 300;
 
 export default async function HomePage() {
-  const featured = await getFeaturedProducts(8);
+  const featured = await getFeaturedProducts(12);
+  const reviewMap = await getReviewSummaries(featured.map((p) => String(p.id)));
+  const topCategories = await getCategoryTree();
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -79,15 +84,65 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Featured Products Grid (server-rendered, 8 newest) */}
+      {/* Shop by Category */}
+      {topCategories.length > 0 && (
+        <section className="bg-white py-12 border-b border-gray-100">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="text-xl font-serif font-bold text-gray-900">Shop by Category</h2>
+                <p className="text-xs text-gray-500">Browse our curated collections</p>
+              </div>
+              <Link
+                href="/shop"
+                className="text-xs font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider"
+              >
+                View All
+              </Link>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {topCategories.map((cat) => (
+                <Link
+                  key={cat.id}
+                  href={`/category/${cat.slug}`}
+                  className="group relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                >
+                  {cat.image_url ? (
+                    <div className="relative h-28 sm:h-36">
+                      <Image
+                        src={cat.image_url}
+                        alt={cat.name}
+                        fill
+                        sizes="(max-width: 640px) 50vw, 25vw"
+                        className="object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent flex items-end p-3">
+                        <span className="text-white text-sm font-semibold">{cat.name}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-24 sm:h-28 flex items-center justify-between px-4 bg-rose-50 group-hover:bg-rose-100 transition-colors">
+                      <span className="text-sm font-semibold text-rose-700">{cat.name}</span>
+                      <ArrowRight className="w-4 h-4 text-rose-400 group-hover:translate-x-0.5 transition-transform" />
+                    </div>
+                  )}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Featured Products Grid (server-rendered, 12 newest) */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 flex-1 w-full">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="text-xl font-serif font-bold text-gray-900">Trending Now</h2>
-            <p className="text-xs text-gray-500">Handpicked favourites for you</p>
+            <h2 className="text-xl font-serif font-bold text-gray-900">New Arrivals</h2>
+            <p className="text-xs text-gray-500">The latest pieces, fresh in store</p>
           </div>
           <Link
-            href="/shop"
+            href="/shop?filter=new-arrivals"
             className="text-xs font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider"
           >
             View All →
@@ -96,7 +151,7 @@ export default async function HomePage() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
           {featured.map((p) => (
-            <ProductCard key={p.id} product={toProductCard(p)} />
+            <ProductCard key={p.id} product={toProductCard(p)} rating={reviewMap[String(p.id)]} />
           ))}
         </div>
       </main>

@@ -1,6 +1,6 @@
 import { getProductById, getSimilarProducts, toProductCard } from '@/lib/products';
 import { getCategoryById, mergeAttributeSchemas } from '@/lib/categories';
-import { getProductReviewSummary } from '@/lib/reviews';
+import { getProductReviewSummary, getReviewSummaries } from '@/lib/reviews';
 import { parseSizes } from '@/lib/sizes';
 import { calculateDiscount, formatPrice } from '@/lib/utils';
 import Link from 'next/link';
@@ -141,6 +141,7 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     { id: String(rawProduct.id), category_id: rawProduct.category_id },
     8
   );
+  const similarReviewMap = await getReviewSummaries(similarProducts.map((p: any) => String(p.id)));
 
   // Breadcrumb segments.
   const crumbs: { label: string; href?: string }[] = [{ label: 'Home', href: '/' }];
@@ -276,7 +277,11 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
           <h2 className="text-xl font-serif font-bold text-gray-900 mb-6">Similar Products</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
             {similarProducts.map((p) => (
-              <ProductCard key={p.id} product={toProductCard(p)} />
+              <ProductCard
+                key={p.id}
+                product={toProductCard(p)}
+                rating={similarReviewMap[String(p.id)]}
+              />
             ))}
           </div>
         </section>

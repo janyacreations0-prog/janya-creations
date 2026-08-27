@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Heart, ShoppingBag } from 'lucide-react';
+import { Heart, ShoppingBag, Star } from 'lucide-react';
 import { Product, ProductVariant } from '@/types';
 import { formatPrice, calculateDiscount } from '@/lib/utils';
 import { defaultSizeOption } from '@/lib/sizes';
@@ -12,9 +12,11 @@ import { useCart } from '@/context/CartContext';
 
 interface ProductCardProps {
   product: Product;
+  /** Real rating summary (approved reviews only). Omit to hide. */
+  rating?: { average: number; count: number } | null;
 }
 
-export default function ProductCard({ product }: ProductCardProps) {
+export default function ProductCard({ product, rating }: ProductCardProps) {
   const { toggleWishlist, isInWishlist } = useWishlist();
   const { addToCart } = useCart();
 
@@ -141,6 +143,21 @@ export default function ProductCard({ product }: ProductCardProps) {
             </h3>
           </Link>
         </div>
+
+        {rating && rating.count > 0 && (
+          <div className="mt-1 flex items-center gap-1">
+            <span className="inline-flex items-center gap-0.5">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Star
+                  key={i}
+                  className={`w-3 h-3 ${i <= Math.round(rating.average) ? 'fill-amber-400 text-amber-400' : 'text-gray-300'}`}
+                />
+              ))}
+            </span>
+            <span className="text-[11px] text-gray-500">{rating.average.toFixed(1)}</span>
+            <span className="text-[11px] text-gray-400">({rating.count})</span>
+          </div>
+        )}
 
         <div className="mt-2 flex items-baseline space-x-2">
           {product.discount_price ? (

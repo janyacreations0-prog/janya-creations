@@ -117,3 +117,45 @@ export async function getProductReviewSummary(productId: string): Promise<Review
   const reviews = await getProductReviews(productId, 200);
   return computeReviewSummary(reviews);
 }
+
+export interface ReviewSummaryMap {
+  [productId: string]: { average: number; count: number };
+}
+
+/**
+ * Batch review summaries for a set of product ids (approved reviews only).
+ * One query — no per-card N+1. Returns an empty map when there are no reviews.
+ * Used by listing pages to show real ratings on ProductCards.
+ */
+export async function getReviewSummaries(productIds: string[]): Promise<ReviewSummaryMap> {
+  const ids = [...new Set((productIds || []).map(String).filter(Boolean))];
+  if (ids.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from('product_reviews')
+    .select('product_id, rating')
+    .in('product_id', ids)
+    .eq('status', 'approved');
+
+  if (error) {
+    console.error('Error fetching review summaries:', error.message);
+    return {};
+  }
+
+  const ratingsByProduct: Record<string, number[]> = {};
+  (data || []).forEach((r: any) => {
+    const pid = String(r.product_id);
+    (ratingsByProduct[pid] = ratingsByProduct[pid] || []).push(Number(r.rating));
+  });
+
+  const map: ReviewSummaryMap = {};
+  Object.entries(ratingsByProduct).forEach(([pid, ratings]) => {
+    if (ratings.length === 0) return;
+    const total = ratings.reduce((s, r) => s + r, 0);
+    map[pid] = {
+      average: Math.round((total / ratings.length) * 10) / 10,
+      count: ratings.length,
+    };
+  });
+  return map;
+}

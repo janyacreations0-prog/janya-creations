@@ -3,6 +3,7 @@ import Link from 'next/link';
 import ProductCard from '@/components/product/ProductCard';
 import Pagination from '@/components/shop/Pagination';
 import { toProductCard } from '@/lib/products';
+import { getReviewSummaries } from '@/lib/reviews';
 import type { Category } from '@/types';
 
 const PAGE_SIZE = 24;
@@ -11,7 +12,7 @@ const PAGE_SIZE = 24;
  * Top-level category page: header + subcategory chips + products in the
  * category (including its subcategories), paginated at the database level.
  */
-export function TopLevelCategoryView({
+export async function TopLevelCategoryView({
   category,
   subcategories,
   products,
@@ -27,6 +28,7 @@ export function TopLevelCategoryView({
   basePath: string;
 }) {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const reviewMap = await getReviewSummaries(products.map((p: any) => String(p.id)));
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -75,7 +77,7 @@ export function TopLevelCategoryView({
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               {products.map((p: any) => (
-                <ProductCard key={p.id} product={toProductCard(p)} />
+                <ProductCard key={p.id} product={toProductCard(p)} rating={reviewMap[String(p.id)]} />
               ))}
             </div>
             <Pagination page={page} totalPages={totalPages} basePath={basePath} params={{}} />
@@ -89,7 +91,7 @@ export function TopLevelCategoryView({
 /**
  * Subcategory page: breadcrumb + products in the subcategory only, paginated.
  */
-export function SubcategoryCategoryView({
+export async function SubcategoryCategoryView({
   category,
   parent,
   products,
@@ -105,6 +107,7 @@ export function SubcategoryCategoryView({
   basePath: string;
 }) {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const reviewMap = await getReviewSummaries(products.map((p: any) => String(p.id)));
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -133,7 +136,7 @@ export function SubcategoryCategoryView({
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             {products.map((p: any) => (
-              <ProductCard key={p.id} product={toProductCard(p)} />
+              <ProductCard key={p.id} product={toProductCard(p)} rating={reviewMap[String(p.id)]} />
             ))}
           </div>
           <Pagination page={page} totalPages={totalPages} basePath={basePath} params={{}} />

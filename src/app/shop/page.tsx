@@ -9,7 +9,9 @@ import {
 } from '@/lib/categories';
 import ProductCard from '@/components/product/ProductCard';
 import ShopFilters, { type Facet } from '@/components/shop/ShopFilters';
+import ShopToolbar from '@/components/shop/ShopToolbar';
 import Pagination from '@/components/shop/Pagination';
+import { getReviewSummaries } from '@/lib/reviews';
 import type { Category, CategoryAttributeDefinition } from '@/types';
 
 interface ShopPageProps {
@@ -149,6 +151,9 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
   const totalCount = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
+  // Real review summaries for the current page (one batch query).
+  const reviewMap = await getReviewSummaries(pageProducts.map((p: any) => String(p.id)));
+
   // --- Compute facets (select/multi-select/boolean) from the scoped set ---
   const allAttrRows = (facetRows as any[]) || [];
   const facets: Facet[] = schema
@@ -211,6 +216,20 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
         />
 
         <div className="lg:col-span-3">
+          <ShopToolbar
+            totalCount={totalCount}
+            from={pageProducts.length > 0 ? from + 1 : 0}
+            to={Math.min(from + PAGE_SIZE, totalCount)}
+            params={sp}
+            sort={sort}
+            q={q}
+            activeCategoryName={activeCategory?.name}
+            subcategoryName={activeSubcategory?.name}
+            minPrice={minPrice}
+            maxPrice={maxPrice}
+            attributeParams={attributeParams}
+          />
+
           {pageProducts.length === 0 ? (
             <div className="text-center py-20">
               <p className="text-gray-500 text-lg">No products found.</p>
@@ -225,7 +244,11 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
                 {pageProducts.map((product: any) => (
-                  <ProductCard key={product.id} product={toProductCard(product)} />
+                  <ProductCard
+                    key={product.id}
+                    product={toProductCard(product)}
+                    rating={reviewMap[String(product.id)]}
+                  />
                 ))}
               </div>
               <Pagination
