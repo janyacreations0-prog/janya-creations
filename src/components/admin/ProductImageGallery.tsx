@@ -35,39 +35,59 @@ export default function ProductImageGallery({
   folder = 'products',
   max = MAX_IMAGES,
 }: ProductImageGalleryProps) {
-  const [uploadingIndex, setUploadingIndex] = useState<number | null>(null);
+  const [uploading, setUploading] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const slots = Array.from({ length: max }, (_, i) => images[i] || null);
+  const remaining = max - images.length;
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    if (images.length >= max) {
+    const addCount = Math.min(files.length, remaining);
+    if (addCount === 0) {
       setError(`Maximum ${max} images allowed. Remove one first.`);
       return;
     }
 
     setError('');
-    setUploadingIndex(images.length);
+    setUploading({ current: 0, total: addCount });
 
-    try {
-      const urls = await uploadImageSet(file, folder);
-      const newImage: GalleryImage = {
-        key: `${Date.now()}-${Math.random().toString(36).substring(2)}`,
-        ...urls,
-      };
-      onChange([...images, newImage]);
-    } catch (err: any) {
-      console.error('Upload error:', err);
-      setError(err?.message || 'Failed to upload image');
-    } finally {
-      setUploadingIndex(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+    let currentGallery = [...images];
+    let hasError = false;
+
+    for (let i = 0; i < addCount; i++) {
+      const file = files[i];
+      setUploading({ current: i + 1, total: addCount });
+      try {
+        const urls = await uploadImageSet(file, folder);
+        currentGallery = [
+          ...currentGallery,
+          {
+            key: `${Date.now()}-${Math.random().toString(36).substring(2)}`,
+            ...urls,
+          },
+        ];
+        onChange(currentGallery);
+      } catch (err: any) {
+        console.error('Upload error:', err);
+        setError(err?.message || `Failed to upload image ${i + 1}`);
+        hasError = true;
       }
+    }
+
+    setUploading(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    // If all files failed, still show the error; if some succeeded, the
+    // already-uploaded images are preserved in the gallery.
+    if (!hasError && addCount === files.length) {
+      // Clear transient error after a short delay when all succeeded.
+      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -115,8 +135,9 @@ export default function ProductImageGallery({
                 <button
                   type="button"
                   onClick={() => handleRemove(img.key)}
-                  aria-label="Remove image"
-                  className="absolute bottom-1.5 right-1.5 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition shadow-sm"
+                  aria-label={`Remove image ${i + 1}`}
+                  title="Remove this image"
+                  className="absolute bottom-1.5 right-1.5 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -126,8 +147,9 @@ export default function ProductImageGallery({
                       type="button"
                       onClick={() => handleMove(i, -1)}
                       disabled={i === 0}
-                      aria-label="Move image left"
-                      className="bg-white/90 text-gray-700 rounded-full p-1 hover:bg-white transition shadow-sm disabled:opacity-40"
+                      aria-label={`Move image ${i + 1} left`}
+                      title="Move image left"
+                      className="bg-white/90 text-gray-700 rounded-full p-1 hover:bg-white transition shadow-sm disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                     >
                       <ChevronLeft className="w-3.5 h-3.5" />
                     </button>
@@ -135,8 +157,9 @@ export default function ProductImageGallery({
                       type="button"
                       onClick={() => handleMove(i, 1)}
                       disabled={i === images.length - 1}
-                      aria-label="Move image right"
-                      className="bg-white/90 text-gray-700 rounded-full p-1 hover:bg-white transition shadow-sm disabled:opacity-40"
+                      aria-label={`Move image ${i + 1} right`}
+                      title="Move image right"
+                      className="bg-white/90 text-gray-700 rounded-full p-1 hover:bg-white transition shadow-sm disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                     >
                       <ChevronRight className="w-3.5 h-3.5" />
                     </button>
@@ -147,11 +170,11 @@ export default function ProductImageGallery({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingIndex !== null}
-                className="w-full h-full flex flex-col items-center justify-center gap-1 text-gray-400 hover:text-amber-600 hover:border-amber-300 transition disabled:opacity-50"
+                disabled={uploading !== null}
+                className="w-full h-full flex flex-col items-center justify-center gap-1 text-gray-400 hover:text-amber-600 hover:border-amber-300 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-inset"
                 aria-label={`Add image ${i + 1}`}
               >
-                {uploadingIndex === i ? (
+                {uploading ? (
                   <>
                     <Loader2 className="w-6 h-6 animate-spin" />
                     <span className="text-[10px]">Uploading...</span>
@@ -177,23 +200,28 @@ export default function ProductImageGallery({
               {images.length} of {max} image{images.length !== 1 ? 's' : ''} • first image is the main product photo
             </p>
           )}
+          {remaining > 0 && !uploading && (
+            <p className="text-[11px] text-gray-400 mt-1">
+              Select multiple images at once — {remaining} slot{remaining !== 1 ? 's' : ''} remaining.
+            </p>
+          )}
         </div>
 
-        {images.length < max && uploadingIndex === null && (
+        {remaining > 0 && uploading === null && (
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition text-xs font-medium"
+            className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1"
           >
             <Upload className="w-3.5 h-3.5" />
-            Upload Image
+            Upload Images{remaining > 1 ? ` (max ${remaining})` : ''}
           </button>
         )}
 
-        {uploadingIndex !== null && (
+        {uploading && (
           <span className="text-xs text-gray-500 flex items-center gap-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            Optimizing & uploading image {uploadingIndex + 1}...
+            Uploading image {uploading.current} of {uploading.total}...
           </span>
         )}
       </div>
@@ -202,6 +230,7 @@ export default function ProductImageGallery({
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleFileSelect}
         className="hidden"
       />

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { slugify } from '@/lib/utils';
 import ImageUpload from '@/components/admin/ImageUpload';
+import ConfirmDialog from '@/components/admin/ConfirmDialog';
 import { Plus, Pencil, Trash2, ArrowLeft, Circle, CheckCircle2, Layers } from 'lucide-react';
 import type { Category } from '@/types';
 
@@ -67,6 +68,11 @@ export default function AdminCategoriesPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [presetParentId, setPresetParentId] = useState<string>('');
   const [editingAttrIndex, setEditingAttrIndex] = useState<number | null>(null);
+
+  // Delete confirmation (in-app modal, no browser-native confirm)
+  const [deleteConfirm, setDeleteConfirm] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
 
   const keyFromLabel = (label: string) =>
     label
@@ -290,15 +296,25 @@ export default function AdminCategoriesPage() {
       setError(`This category contains ${childCount} subcategory(s). Delete or reassign them before deleting this category.`);
       return;
     }
-    if (!window.confirm(`Delete category "${cat.name}"?`)) return;
+    setDeleteConfirm(cat);
+  };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirm || deleting || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setError('');
     try {
-      const { error } = await supabase.from('categories').delete().eq('id', id);
+      const { error } = await supabase.from('categories').delete().eq('id', String(deleteConfirm.id));
       if (error) throw error;
       setSuccess('Category deleted');
+      setDeleteConfirm(null);
       await load();
     } catch (err: any) {
       setError(err.message || 'Failed to delete category');
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
     }
   };
 
@@ -692,6 +708,25 @@ export default function AdminCategoriesPage() {
           </div>
         )}
       </div>
+
+      {/* Delete category confirmation modal */}
+      <ConfirmDialog
+        open={deleteConfirm !== null}
+        title="Delete Category?"
+        message={
+          deleteConfirm ? (
+            <>
+              Are you sure you want to delete <span className="font-semibold text-gray-900">{deleteConfirm.name}</span>? This action cannot be undone.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete Category"
+        cancelLabel="Cancel"
+        destructive
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => !deleting && setDeleteConfirm(null)}
+      />
     </div>
   );
 }

@@ -1,14 +1,17 @@
 'use client';
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import ProductImageGallery, { type GalleryImage } from '@/components/admin/ProductImageGallery';
+import ConfirmDialog from '@/components/admin/ConfirmDialog';
+import Toast, { type ToastData } from '@/components/admin/Toast';
 import { 
   ShieldCheck, Package, ShoppingBag, LogOut, TrendingUp,
   Plus, Trash2, Edit2, Eye, Search, ChevronLeft, ChevronRight,
-  IndianRupee, Users, AlertTriangle
+  IndianRupee, Users, AlertTriangle, Loader2, ArrowUp, ArrowDown,
+  ArrowUpDown, X, CheckSquare
 } from 'lucide-react';
 import { saveProduct } from '@/lib/admin-actions';
 import { mergeAttributeSchemas } from '@/lib/categories';
@@ -37,6 +40,13 @@ interface Product {
 const ITEMS_PER_PAGE = 20;
 const AUTO_BADGE_PATTERN = /^\d+\s*%\s*OFF$/i;
 
+type SortKey = 'name' | 'category' | 'subcategory' | 'price' | 'stock' | 'created';
+type SortDir = 'asc' | 'desc';
+
+type DeleteTarget =
+  | { kind: 'single'; product: Product }
+  | { kind: 'bulk'; ids: string[] };
+
 function emptyForm() {
   return {
     name: '',
@@ -61,11 +71,10 @@ export default function AdminPage() {
   const supabase = useMemo(() => createClient(), []);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAddingProduct, setIsAddingProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
 
   // 🔍 Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,12 +84,35 @@ export default function AdminPage() {
   // Categories (dynamic, database-backed)
   const [categories, setCategories] = useState<any[]>([]);
 
-  // 📄 Database-level Pagination States
+  // 📄 Database-level Pagination + Sorting States
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [sortKey, setSortKey] = useState<SortKey>('created');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  // Form state
+  // ✅ Bulk selection (survives pagination/search/filter — id-based)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Form state + unsaved-changes guard
   const [formData, setFormData] = useState(emptyForm());
+  const formSnapshotRef = useRef<string>('');
+  const [formDirty, setFormDirty] = useState(false);
+  const pendingStartEditRef = useRef<Product | null>(null);
+
+  // Re-entry guards — refs (not just state) so rapid double-submits are blocked
+  const savingRef = useRef(false);
+  const deletingRef = useRef(false);
+
+  // Delete confirmation (single + bulk) and discard-changes confirmation
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+
+  // Feedback
+  const [toast, setToast] = useState<ToastData | null>(null);
+
+  // Row-level busy state for the stock toggle
+  const [busyStockId, setBusyStockId] = useState<string | null>(null);
 
   // Real ecommerce KPIs (fetched from live data — never dummy)
   const [kpis, setKpis] = useState({
@@ -96,6 +128,10 @@ export default function AdminPage() {
 
   // Derived category helpers
   const topCategories = categories.filter((c: any) => !c.parent_id);
+
+  const showToast = useCallback((type: ToastData['type'], message: string) => {
+    setToast({ type, message });
+  }, []);
 
   // Active categories only for product assignment (admin may still edit a
   // product assigned to an inactive category — those are merged back in below).
@@ -165,13 +201,6 @@ export default function AdminPage() {
     return { pct: 0, save: 0, invalid: false };
   }, [formData.price, formData.original_price]);
 
-  const handleAttributeChange = (key: string, value: unknown) => {
-    setFormData((f) => ({
-      ...f,
-      attributes: { ...f.attributes, [key]: value },
-    }));
-  };
-
   // When price/MRP change, auto-fill the discount badge (unless the admin set
   // a custom badge that isn't the auto "X% OFF" pattern).
   const handlePriceChange = (field: 'price' | 'original_price', value: string) => {
@@ -191,6 +220,11 @@ export default function AdminPage() {
       return next;
     });
   };
+
+  // Track unsaved form changes against the last known good snapshot.
+  useEffect(() => {
+    setFormDirty(formSnapshotRef.current !== JSON.stringify(formData));
+  }, [formData]);
 
   useEffect(() => {
     checkAuth();
@@ -255,15 +289,20 @@ export default function AdminPage() {
     }
   }, [supabase]);
 
-  // Database-level paginated listing with search + category filtering applied
-  // on the server (Supabase) — no client-side slicing of a full table.
+  // Database-level paginated listing with search, category filtering and
+  // sorting applied on the server (Supabase) — no client-side slicing.
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      let query = supabase
-        .from('products')
-        .select('*', { count: 'exact' })
-        .order('created_at', { ascending: false });
+      // Category/subcategory sorts need the categories relation embedded.
+      const needsJoin = sortKey === 'category' || sortKey === 'subcategory';
+      let query = needsJoin
+        ? supabase
+            .from('products')
+            .select('*, categories(name, parent:categories(name))', { count: 'exact' })
+        : supabase
+            .from('products')
+            .select('*', { count: 'exact' });
 
       const q = debouncedSearch.trim();
       if (q) {
@@ -278,6 +317,15 @@ export default function AdminPage() {
         query = query.in('category_id', [topId, ...childIds]);
       }
 
+      const orderCol =
+        sortKey === 'category' ? 'categories(parent(name))'
+        : sortKey === 'subcategory' ? 'categories(name)'
+        : sortKey === 'stock' ? 'stock_quantity'
+        : sortKey === 'created' ? 'created_at'
+        : sortKey; // 'name' | 'price'
+
+      query = query.order(orderCol, { ascending: sortDir === 'asc' });
+
       const from = (currentPage - 1) * ITEMS_PER_PAGE;
       const { data, count, error } = await query.range(from, from + ITEMS_PER_PAGE - 1);
 
@@ -286,16 +334,23 @@ export default function AdminPage() {
       setTotalCount(count || 0);
     } catch (err: any) {
       console.error('Error loading products:', err);
+      showToast('error', 'Failed to load products.');
     } finally {
       setLoading(false);
     }
-  }, [supabase, debouncedSearch, selectedCategory, currentPage, categories]);
+  }, [supabase, debouncedSearch, selectedCategory, currentPage, categories, sortKey, sortDir, showToast]);
 
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
+
+  const handleSort = (key: SortKey) => {
+    setSortKey(key);
+    setSortDir((d) => (sortKey === key && d === 'asc' ? 'desc' : 'asc'));
+    setCurrentPage(1);
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -316,6 +371,8 @@ export default function AdminPage() {
 
   // 3. Status Toggle Handler (Supabase Update)
   const handleToggleStock = async (product: Product) => {
+    if (busyStockId) return;
+    setBusyStockId(product.id);
     const newStock = product.stock_quantity > 0 ? 0 : 10;
     try {
       const { error } = await supabase
@@ -328,13 +385,16 @@ export default function AdminPage() {
       setProducts(prev =>
         prev.map(item => item.id === product.id ? { ...item, stock_quantity: newStock } : item)
       );
+      showToast('success', `✅ Stock updated — ${newStock > 0 ? 'In Stock' : 'Out of Stock'}.`);
     } catch (err: any) {
-      setError('Failed to update stock status');
+      showToast('error', 'Failed to update stock status.');
+    } finally {
+      setBusyStockId(null);
     }
   };
 
   // 4. Populate form for Editing
-  const handleStartEdit = async (product: Product) => {
+  const beginEdit = async (product: Product) => {
     setEditingProduct(product);
     setIsAddingProduct(true);
 
@@ -386,7 +446,7 @@ export default function AdminPage() {
       // gallery stays empty — legacy single image columns still shown below
     }
 
-    setFormData({
+    const nextForm = {
       name: product.name || '',
       price: product.price ? String(product.price) : '',
       original_price: product.original_price ? String(product.original_price) : '',
@@ -401,24 +461,64 @@ export default function AdminPage() {
       image_thumbnail: product.image_thumbnail || '',
       gallery,
       attributes,
-    });
+    };
+    setFormData(nextForm);
+    formSnapshotRef.current = JSON.stringify(nextForm);
     window.scrollTo({ top: 300, behavior: 'smooth' });
+  };
+
+  const handleStartEdit = (product: Product) => {
+    // Never silently discard unsaved edits — confirm first.
+    if (formDirty && isAddingProduct) {
+      pendingStartEditRef.current = product;
+      setDiscardConfirm(true);
+      return;
+    }
+    beginEdit(product);
+  };
+
+  const closeForm = () => {
+    setIsAddingProduct(false);
+    setEditingProduct(null);
+    setFormData(emptyForm());
+    formSnapshotRef.current = JSON.stringify(emptyForm());
+    pendingStartEditRef.current = null;
+  };
+
+  const handleCancelForm = () => {
+    if (formDirty) {
+      pendingStartEditRef.current = null;
+      setDiscardConfirm(true);
+      return;
+    }
+    closeForm();
+  };
+
+  const handleDiscardConfirmed = () => {
+    setDiscardConfirm(false);
+    const pending = pendingStartEditRef.current;
+    if (pending) {
+      pendingStartEditRef.current = null;
+      beginEdit(pending);
+    } else {
+      closeForm();
+    }
   };
 
   // 5. Add / Update Product Submit
   const handleSaveProduct = async (e?: React.FormEvent, keepOpen = false) => {
     e?.preventDefault();
-    setError('');
-    setSuccess('');
-    setLoading(true);
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setToast(null);
+    setSaving(true);
 
     try {
       // Reject selling price exceeding MRP before hitting the server.
       const mrpForSave = formData.original_price ? Number(formData.original_price) : 0;
       const saleForSave = Number(formData.price) || 0;
       if (mrpForSave > 0 && saleForSave > mrpForSave) {
-        setError('Selling price cannot be greater than the original price (MRP).');
-        setLoading(false);
+        showToast('error', 'Selling price cannot be greater than the original price (MRP).');
         return;
       }
 
@@ -461,47 +561,126 @@ export default function AdminPage() {
       });
 
       if (!result.success) {
-        setError(result.error || 'Failed to save product');
-        setLoading(false);
+        showToast('error', result.error || 'Failed to save product');
         return;
       }
 
-      setSuccess(editingProduct ? '✅ Product updated successfully!' : '✅ Product added successfully!');
+      showToast('success', editingProduct ? '✅ Product updated successfully!' : '✅ Product added successfully!');
 
-      setFormData(emptyForm());
       if (keepOpen) {
         // Stay in the form for rapid entry of the next product.
+        setFormData(emptyForm());
+        formSnapshotRef.current = JSON.stringify(emptyForm());
         setEditingProduct(null);
       } else {
-        setIsAddingProduct(false);
-        setEditingProduct(null);
+        closeForm();
       }
       await Promise.all([loadProducts(), loadKpis()]);
 
     } catch (err: any) {
-      setError(err.message || 'Failed to save product');
+      showToast('error', err.message || 'Failed to save product');
     } finally {
-      setLoading(false);
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
-  const handleDeleteProduct = async (id: string) => {
-    if (!confirm('Delete this product permanently?')) return;
+  // 6. Delete (single + bulk) via the custom confirmation modal
+  const requestDeleteSingle = (product: Product) => {
+    setDeleteConfirm({ kind: 'single', product });
+  };
 
+  const requestDeleteBulk = () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setDeleteConfirm({ kind: 'bulk', ids });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirm || deleting || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
     try {
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', id);
+      if (deleteConfirm.kind === 'single') {
+        const { id } = deleteConfirm.product;
+        const { error } = await supabase.from('products').delete().eq('id', id);
+        if (error) throw error;
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        showToast('success', '✅ Product deleted successfully!');
+      } else {
+        const ids = deleteConfirm.ids;
+        const { error } = await supabase.from('products').delete().in('id', ids);
+        if (error) throw error;
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+        showToast('success', `✅ ${ids.length} product${ids.length !== 1 ? 's' : ''} deleted.`);
+      }
 
-      if (error) throw error;
-
-      setSuccess('✅ Product deleted successfully!');
+      // Close only after a successful deletion.
+      setDeleteConfirm(null);
       await Promise.all([loadProducts(), loadKpis()]);
-
     } catch (err: any) {
-      setError(err.message || 'Failed to delete product');
+      showToast('error', err?.message || 'Failed to delete product(s).');
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
     }
+  };
+
+  // 7. Bulk selection helpers
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allOnPageSelected =
+    products.length > 0 && products.every((p) => selectedIds.has(String(p.id)));
+
+  const handleToggleSelectAll = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        products.forEach((p) => next.delete(String(p.id)));
+      } else {
+        products.forEach((p) => next.add(String(p.id)));
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // 8. Sortable table header
+  const sortableHeader = (key: SortKey, label: string, align: 'left' | 'center' = 'left') => {
+    const active = sortKey === key;
+    const Icon = active ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <th className={`p-3 ${align === 'center' ? 'text-center' : ''}`}>
+        <button
+          type="button"
+          onClick={() => handleSort(key)}
+          className={`inline-flex items-center gap-1 font-bold uppercase tracking-wider transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded ${
+            active ? 'text-rose-600' : 'text-gray-400 hover:text-gray-600'
+          }`}
+          aria-label={`Sort by ${label}${active ? `, currently ${sortDir}ending` : ''}`}
+          title={`Sort by ${label}`}
+        >
+          {label}
+          <Icon className={`w-3 h-3 ${active ? 'text-rose-500' : 'text-gray-300'}`} />
+        </button>
+      </th>
+    );
   };
 
   if (isAuthLoading) {
@@ -513,6 +692,28 @@ export default function AdminPage() {
   }
 
   const money = (n: number) => `₹${(n || 0).toLocaleString('en-IN')}`;
+
+  const deleteDialogProps = deleteConfirm
+    ? deleteConfirm.kind === 'single'
+      ? {
+          title: 'Delete Product?',
+          message: (
+            <>
+              Are you sure you want to delete <span className="font-semibold text-gray-900">{deleteConfirm.product.name}</span>? This action cannot be undone.
+            </>
+          ),
+          confirmLabel: 'Delete Product',
+        }
+      : {
+          title: 'Delete Selected Products?',
+          message: (
+            <>
+              You are about to delete <span className="font-semibold text-gray-900">{deleteConfirm.ids.length}</span> product{deleteConfirm.ids.length !== 1 ? 's' : ''}. This action cannot be undone.
+            </>
+          ),
+          confirmLabel: `Delete ${deleteConfirm.ids.length} Product${deleteConfirm.ids.length !== 1 ? 's' : ''}`,
+        }
+    : null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -550,7 +751,7 @@ export default function AdminPage() {
           </div>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 text-sm text-gray-600 hover:text-red-600 transition px-3 py-1.5 rounded-lg hover:bg-red-50"
+            className="flex items-center gap-2 text-sm text-gray-600 hover:text-red-600 transition px-3 py-1.5 rounded-lg hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
           >
             <LogOut className="w-4 h-4" /> Logout
           </button>
@@ -625,29 +826,21 @@ export default function AdminPage() {
             </div>
             <button
               onClick={() => {
-                setIsAddingProduct(!isAddingProduct);
-                setEditingProduct(null);
-                setFormData(emptyForm());
-                setError('');
-                setSuccess('');
+                if (isAddingProduct) {
+                  handleCancelForm();
+                } else {
+                  setIsAddingProduct(true);
+                  setEditingProduct(null);
+                  setFormData(emptyForm());
+                  formSnapshotRef.current = JSON.stringify(emptyForm());
+                  setToast(null);
+                }
               }}
-              className="flex items-center gap-2 bg-rose-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-rose-700 transition"
+              className="flex items-center gap-2 bg-rose-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-rose-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1"
             >
               <Plus className="w-4 h-4" /> {isAddingProduct ? 'Cancel' : 'Add Product'}
             </button>
           </div>
-
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-xs">
-              {error}
-            </div>
-          )}
-
-          {success && (
-            <div className="p-3 bg-green-50 border border-green-200 text-green-600 rounded-lg text-xs">
-              {success}
-            </div>
-          )}
 
           {/* Add / Edit Product Form */}
           {isAddingProduct && (
@@ -886,30 +1079,30 @@ export default function AdminPage() {
                     placeholder="Describe your product..."
                   />
                 </div>
-                <div className="md:col-span-2 flex gap-3">
+                <div className="md:col-span-2 flex flex-wrap gap-3">
                   <button
                     type="submit"
-                    disabled={loading}
-                    className="bg-rose-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-rose-700 transition disabled:opacity-50 flex items-center gap-2"
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 bg-rose-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-rose-700 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1"
                   >
-                    {loading ? 'Saving...' : editingProduct ? 'Update Product' : 'Add Product'}
+                    {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {saving ? 'Saving...' : editingProduct ? 'Update Product' : 'Add Product'}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSaveProduct(undefined, true)}
-                    disabled={loading}
-                    className="bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-emerald-700 transition disabled:opacity-50 flex items-center gap-2"
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-emerald-700 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1"
                     title="Save this product and start entering the next one"
                   >
-                    {loading ? 'Saving...' : 'Save & Add Another'}
+                    {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {saving ? 'Saving...' : 'Save & Add Another'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setIsAddingProduct(false);
-                      setEditingProduct(null);
-                    }}
-                    className="bg-gray-200 text-gray-700 px-5 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300 transition"
+                    onClick={handleCancelForm}
+                    disabled={saving}
+                    className="bg-gray-200 text-gray-700 px-5 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300 transition disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                   >
                     Cancel
                   </button>
@@ -930,8 +1123,21 @@ export default function AdminPage() {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all"
+                className="w-full pl-9 pr-9 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             <select
@@ -951,6 +1157,33 @@ export default function AdminPage() {
             </select>
           </div>
 
+          {/* Bulk selection bar */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center justify-between gap-3 bg-rose-50/70 border border-rose-100 rounded-lg px-4 py-2.5">
+              <span className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                <CheckSquare className="w-4 h-4 text-rose-600" />
+                {selectedIds.size} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={requestDeleteBulk}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Selected
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Product List Table */}
           {loading && !isAddingProduct ? (
             <div className="text-center py-12 text-gray-500">
@@ -962,11 +1195,20 @@ export default function AdminPage() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50/50 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                    <th className="p-3">Product</th>
-                    <th className="p-3">Category</th>
-                    <th className="p-3">Subcategory</th>
-                    <th className="p-3">Price</th>
-                    <th className="p-3">Status</th>
+                    <th className="p-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        onChange={handleToggleSelectAll}
+                        aria-label="Select all products on this page"
+                        className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                      />
+                    </th>
+                    {sortableHeader('name', 'Product')}
+                    {sortableHeader('category', 'Category')}
+                    {sortableHeader('subcategory', 'Subcategory')}
+                    {sortableHeader('price', 'Price')}
+                    {sortableHeader('stock', 'Status')}
                     <th className="p-3 text-center">Actions</th>
                   </tr>
                 </thead>
@@ -974,8 +1216,18 @@ export default function AdminPage() {
                   {products.length > 0 ? (
                     products.map((product) => {
                       const isInStock = (product.stock_quantity ?? 0) > 0;
+                      const isSelected = selectedIds.has(String(product.id));
                       return (
-                        <tr key={product.id} className="hover:bg-gray-50/50 transition-colors">
+                        <tr key={product.id} className={`hover:bg-gray-50/50 transition-colors ${isSelected ? 'bg-rose-50/40' : ''}`}>
+                          <td className="p-3 w-10">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(String(product.id))}
+                              aria-label={`Select ${product.name}`}
+                              className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                            />
+                          </td>
                           <td className="p-3">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-md bg-gray-100 overflow-hidden flex-shrink-0 border border-gray-200">
@@ -1016,40 +1268,49 @@ export default function AdminPage() {
                           <td className="p-3">
                             <button
                               onClick={() => handleToggleStock(product)}
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide transition-all ${
+                              disabled={busyStockId === product.id}
+                              aria-label={`${isInStock ? 'Mark' : 'Mark'} ${product.name} ${isInStock ? 'out of' : 'in'} stock`}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
                                 isInStock
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : 'bg-gray-100 text-gray-500 border border-gray-200'
-                              }`}
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 focus-visible:ring-emerald-500'
+                                  : 'bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200 focus-visible:ring-gray-400'
+                              } disabled:opacity-50 disabled:cursor-wait`}
                             >
-                              <span className={`w-1.5 h-1.5 rounded-full ${isInStock ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                              {busyStockId === product.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <span className={`w-1.5 h-1.5 rounded-full ${isInStock ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                              )}
                               {isInStock ? 'In Stock' : 'Out of Stock'}
                             </button>
                           </td>
 
                           {/* Actions: View, Edit, Delete */}
                           <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-2">
+                            <div className="flex items-center justify-center gap-1">
                               <Link
                                 href={`/products/${product.id}`}
+                                aria-label={`View ${product.name}`}
                                 title="View Product Page"
-                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all"
+                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                               >
                                 <Eye className="w-4 h-4" />
                               </Link>
 
                               <button
                                 onClick={() => handleStartEdit(product)}
+                                aria-label={`Edit ${product.name}`}
                                 title="Edit Product"
-                                className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-all"
+                                className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                               >
                                 <Edit2 className="w-4 h-4" />
                               </button>
 
                               <button
-                                onClick={() => handleDeleteProduct(product.id)}
+                                onClick={() => requestDeleteSingle(product)}
+                                aria-label={`Delete ${product.name}`}
                                 title="Delete Product"
-                                className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-all"
+                                className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1060,7 +1321,7 @@ export default function AdminPage() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
+                      <td colSpan={7} className="py-8 text-center text-gray-400 text-xs">
                         No products found matching your search.
                       </td>
                     </tr>
@@ -1081,7 +1342,8 @@ export default function AdminPage() {
               <button
                 onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
                 disabled={currentPage === 1}
-                className="p-1.5 border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                aria-label="Previous page"
+                className="p-1.5 border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -1091,7 +1353,8 @@ export default function AdminPage() {
               <button
                 onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
                 disabled={currentPage === totalPages}
-                className="p-1.5 border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                aria-label="Next page"
+                className="p-1.5 border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -1100,6 +1363,37 @@ export default function AdminPage() {
 
         </div>
       </div>
+
+      {/* Delete confirmation modal (single + bulk) */}
+      <ConfirmDialog
+        open={deleteConfirm !== null}
+        title={deleteDialogProps?.title ?? ''}
+        message={deleteDialogProps?.message ?? null}
+        confirmLabel={deleteDialogProps?.confirmLabel ?? 'Delete'}
+        cancelLabel="Cancel"
+        destructive
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => !deleting && setDeleteConfirm(null)}
+      />
+
+      {/* Discard unsaved changes modal */}
+      <ConfirmDialog
+        open={discardConfirm}
+        title="Discard changes?"
+        message="You have unsaved changes in the product form. If you continue, these changes will be lost."
+        confirmLabel="Discard Changes"
+        cancelLabel="Keep Editing"
+        destructive={false}
+        loading={false}
+        onConfirm={handleDiscardConfirmed}
+        onCancel={() => {
+          setDiscardConfirm(false);
+          pendingStartEditRef.current = null;
+        }}
+      />
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
   );
 }
