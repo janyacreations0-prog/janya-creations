@@ -7,6 +7,9 @@ import { createClient } from '@/lib/supabase/client';
 import ProductImageGallery, { type GalleryImage } from '@/components/admin/ProductImageGallery';
 import ConfirmDialog from '@/components/admin/ConfirmDialog';
 import Toast, { type ToastData } from '@/components/admin/Toast';
+import AddCategoryModal from '@/components/admin/AddCategoryModal';
+import AddAttributeValueModal from '@/components/admin/AddAttributeValueModal';
+import type { Category } from '@/types';
 import { 
   ShieldCheck, Package, ShoppingBag, LogOut, TrendingUp,
   Plus, Trash2, Edit2, Eye, Search, ChevronLeft, ChevronRight,
@@ -47,6 +50,14 @@ type SortDir = 'asc' | 'desc';
 type DeleteTarget =
   | { kind: 'single'; product: Product }
   | { kind: 'bulk'; ids: string[] };
+
+interface AttrModalState {
+  key: string;
+  label: string;
+  options: string[];
+  targetCategoryId: string;
+  attributeSchema: CategoryAttributeDefinition[];
+}
 
 function emptyForm() {
   return {
@@ -112,6 +123,10 @@ export default function AdminPage() {
 
   // Feedback
   const [toast, setToast] = useState<ToastData | null>(null);
+
+  // Quick-add modals (category / subcategory / attribute value)
+  const [categoryModal, setCategoryModal] = useState<{ parentId: string; parentName?: string } | null>(null);
+  const [attrModal, setAttrModal] = useState<AttrModalState | null>(null);
 
   // Row-level busy state for the stock toggle
   const [busyStockId, setBusyStockId] = useState<string | null>(null);
@@ -248,6 +263,108 @@ export default function AdminPage() {
 
   const removeSize = (index: number) => {
     setFormData((f) => ({ ...f, sizes: f.sizes.filter((_, i) => i !== index) }));
+  };
+
+  // ── Quick-add handlers ─────────────────────────────────────────────────────
+
+  /** Category/subcategory created → refresh dropdowns + select it. */
+  const handleCategoryCreated = (categoryId: string) => {
+    const modal = categoryModal;
+    if (!modal) return;
+    loadCategories();
+    if (modal.parentId) {
+      // Subcategory created → set parent + new leaf.
+      setFormData((f) => ({
+        ...f,
+        categoryId: modal.parentId,
+        subcategoryId: categoryId,
+        attributes: {},
+      }));
+      showToast('success', '✅ Subcategory added.');
+    } else {
+      setFormData((f) => ({
+        ...f,
+        categoryId: categoryId,
+        subcategoryId: '',
+        attributes: {},
+      }));
+      showToast('success', '✅ Category added.');
+    }
+    setCategoryModal(null);
+  };
+
+  /**
+   * Resolves which category holds the attribute definition (leaf, or its parent
+   * when the attribute is shared), then opens the quick-add modal.
+   */
+  const openAttributeModal = (def: CategoryAttributeDefinition) => {
+    const leafId = formData.subcategoryId || formData.categoryId;
+    if (!leafId) {
+      showToast('error', 'Select a category first.');
+      return;
+    }
+    const leaf = categories.find((c: any) => String(c.id) === String(leafId));
+    let target = leaf;
+    if (leaf?.parent_id) {
+      const parent = categories.find((c: any) => String(c.id) === String(leaf.parent_id));
+      const leafHasKey = (leaf.attribute_schema || []).some((a: any) => a.key === def.key);
+      if (!leafHasKey && parent && (parent.attribute_schema || []).some((a: any) => a.key === def.key)) {
+        target = parent;
+      }
+    }
+    if (!target) {
+      showToast('error', 'Select a category first.');
+      return;
+    }
+    setAttrModal({
+      key: def.key,
+      label: def.label,
+      options: def.options || [],
+      targetCategoryId: String(target.id),
+      attributeSchema: (target.attribute_schema || []) as CategoryAttributeDefinition[],
+    });
+  };
+
+  /** Attribute value created → refresh local schema + select the new value. */
+  const handleAttributeValueCreated = (value: string) => {
+    const modal = attrModal;
+    if (!modal) return;
+
+    // Update the local categories state so the dropdown options refresh
+    // without a full reload (keeps all other product form fields intact).
+    setCategories((prev) =>
+      prev.map((c: any) => {
+        if (String(c.id) !== modal.targetCategoryId) return c;
+        const schema = (c.attribute_schema || []).map((a: any) => ({ ...a }));
+        const def = schema.find((a: any) => a.key === modal.key);
+        if (def) {
+          if (def.type === 'select' || def.type === 'multi-select') {
+            def.options = [...(def.options || []), value];
+          }
+        } else {
+          schema.push({
+            key: modal.key,
+            label: modal.label,
+            type: 'select',
+            options: [value],
+            required: false,
+          });
+        }
+        return { ...c, attribute_schema: schema };
+      })
+    );
+
+    // Auto-select the newly created value.
+    setFormData((f) => {
+      const cur = f.attributes[modal.key];
+      if (Array.isArray(cur)) {
+        return { ...f, attributes: { ...f.attributes, [modal.key]: [...cur, value] } };
+      }
+      return { ...f, attributes: { ...f.attributes, [modal.key]: value } };
+    });
+
+    showToast('success', `✅ ${modal.label} "${value}" added.`);
+    setAttrModal(null);
   };
 
   useEffect(() => {
@@ -942,42 +1059,73 @@ export default function AdminPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Category</label>
-                  <select
-                    value={formData.categoryId}
-                    onChange={(e) =>
-                      setFormData({ ...formData, categoryId: e.target.value, subcategoryId: '', attributes: {} })
-                    }
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
-                  >
-                    <option value="">Select Category</option>
-                    {topCategoryOptions.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{c.is_active ? '' : ' (inactive)'}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={formData.categoryId}
+                      onChange={(e) =>
+                        setFormData({ ...formData, categoryId: e.target.value, subcategoryId: '', attributes: {} })
+                      }
+                      className="flex-1 p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
+                    >
+                      <option value="">Select Category</option>
+                      {topCategoryOptions.map((c: any) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.is_active ? '' : ' (inactive)'}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setCategoryModal({ parentId: '' })}
+                      title="Add Category"
+                      aria-label="Add Category"
+                      className="flex-shrink-0 inline-flex items-center justify-center w-9 p-2.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Subcategory</label>
-                  <select
-                    value={formData.subcategoryId}
-                    onChange={(e) =>
-                      setFormData({ ...formData, subcategoryId: e.target.value, attributes: {} })
-                    }
-                    disabled={!formData.categoryId || subcategoryOptions.length === 0}
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-                  >
-                    <option value="">
-                      {formData.categoryId && subcategoryOptions.length > 0
-                        ? 'Select Subcategory (optional)'
-                        : 'Not applicable'}
-                    </option>
-                    {subcategoryOptions.map((sub: any) => (
-                      <option key={sub.id} value={sub.id}>
-                        {sub.name}{sub.is_active ? '' : ' (inactive)'}
+                  <div className="flex gap-2">
+                    <select
+                      value={formData.subcategoryId}
+                      onChange={(e) =>
+                        setFormData({ ...formData, subcategoryId: e.target.value, attributes: {} })
+                      }
+                      disabled={!formData.categoryId || subcategoryOptions.length === 0}
+                      className="flex-1 p-2.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    >
+                      <option value="">
+                        {formData.categoryId && subcategoryOptions.length > 0
+                          ? 'Select Subcategory (optional)'
+                          : 'Not applicable'}
                       </option>
-                    ))}
-                  </select>
+                      {subcategoryOptions.map((sub: any) => (
+                        <option key={sub.id} value={sub.id}>
+                          {sub.name}{sub.is_active ? '' : ' (inactive)'}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const parent = categories.find(
+                          (c: any) => String(c.id) === String(formData.categoryId)
+                        );
+                        setCategoryModal({
+                          parentId: formData.categoryId,
+                          parentName: parent?.name,
+                        });
+                      }}
+                      disabled={!formData.categoryId}
+                      title={!formData.categoryId ? 'Select a category first' : 'Add Subcategory'}
+                      aria-label="Add Subcategory"
+                      className="flex-shrink-0 inline-flex items-center justify-center w-9 p-2.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 transition disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Stock Quantity</label>
@@ -1099,40 +1247,62 @@ export default function AdminPage() {
                               </div>
                             )}
                             {def.type === 'select' && (
-                              <select
-                                value={typeof value === 'string' ? value : ''}
-                                onChange={(e) => setVal(e.target.value)}
-                                className="w-full p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
-                              >
-                                <option value="">{def.placeholder || 'Select...'}</option>
-                                {(def.options || []).map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="flex gap-2">
+                                <select
+                                  value={typeof value === 'string' ? value : ''}
+                                  onChange={(e) => setVal(e.target.value)}
+                                  className="flex-1 p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
+                                >
+                                  <option value="">{def.placeholder || 'Select...'}</option>
+                                  {(def.options || []).map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => openAttributeModal(def)}
+                                  title={`Add ${def.label}`}
+                                  aria-label={`Add ${def.label}`}
+                                  className="flex-shrink-0 inline-flex items-center justify-center w-8 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             )}
                             {def.type === 'multi-select' && (
-                              <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
-                                {(def.options || []).map((opt) => {
-                                  const arr = (Array.isArray(value) ? value : []) as string[];
-                                  const checked = arr.includes(opt);
-                                  return (
-                                    <label key={opt} className="flex items-center gap-1.5 text-xs">
-                                      <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={() => {
-                                          setVal(
-                                            checked ? arr.filter((v) => v !== opt) : [...arr, opt]
-                                          );
-                                        }}
-                                        className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
-                                      />
-                                      {opt}
-                                    </label>
-                                  );
-                                })}
+                              <div>
+                                <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                                  {(def.options || []).map((opt) => {
+                                    const arr = (Array.isArray(value) ? value : []) as string[];
+                                    const checked = arr.includes(opt);
+                                    return (
+                                      <label key={opt} className="flex items-center gap-1.5 text-xs">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => {
+                                            setVal(
+                                              checked ? arr.filter((v) => v !== opt) : [...arr, opt]
+                                            );
+                                          }}
+                                          className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                                        />
+                                        {opt}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openAttributeModal(def)}
+                                  title={`Add ${def.label}`}
+                                  aria-label={`Add ${def.label}`}
+                                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> Add {def.label}
+                                </button>
                               </div>
                             )}
                             {def.type === 'boolean' && (
@@ -1484,6 +1654,30 @@ export default function AdminPage() {
           pendingStartEditRef.current = null;
         }}
       />
+
+      {/* Quick-add: Category / Subcategory */}
+      <AddCategoryModal
+        open={categoryModal !== null}
+        onClose={() => setCategoryModal(null)}
+        categories={categories as Category[]}
+        parentId={categoryModal?.parentId ?? ''}
+        parentName={categoryModal?.parentName}
+        onCreated={handleCategoryCreated}
+      />
+
+      {/* Quick-add: attribute value (Material, Colour, etc.) */}
+      {attrModal && (
+        <AddAttributeValueModal
+          open
+          onClose={() => setAttrModal(null)}
+          attributeLabel={attrModal.label}
+          attributeKey={attrModal.key}
+          currentOptions={attrModal.options}
+          targetCategoryId={attrModal.targetCategoryId}
+          attributeSchema={attrModal.attributeSchema}
+          onCreated={handleAttributeValueCreated}
+        />
+      )}
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
