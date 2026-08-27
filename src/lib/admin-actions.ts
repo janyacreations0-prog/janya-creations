@@ -26,6 +26,8 @@ export interface SaveProductInput {
   image_thumbnail: string;
   /** Up to 4 gallery images persisted to product_images (position 0-3). */
   gallery?: SaveProductGalleryImage[];
+  /** Size/option list (e.g. ["S","M","Free Size"] + per-option stock). */
+  sizes?: { value: string; stock: number }[];
   attributes: Record<string, unknown>;
   /** Legacy products.category text — written on CREATE only, never on update. */
   legacyCategoryName?: string;
@@ -33,6 +35,30 @@ export interface SaveProductInput {
 
 /** Matches the auto-generated discount badge so edits recompute it. */
 const AUTO_BADGE_PATTERN = /^\d+\s*%\s*OFF$/i;
+
+const MAX_SIZE_OPTIONS = 30;
+
+/**
+ * Sanitizes the admin-entered size/option list. Empty/blank values and
+ * duplicate values are dropped; stock is coerced to a non-negative integer.
+ * "Free Size" is just a normal value — it needs no special casing here.
+ */
+function sanitizeSizes(sizes: { value: string; stock: number }[] | undefined) {
+  if (!Array.isArray(sizes)) return [];
+  const seen = new Set<string>();
+  const clean: { value: string; stock: number }[] = [];
+  for (const s of sizes.slice(0, MAX_SIZE_OPTIONS)) {
+    const value = String(s?.value ?? '').trim();
+    if (!value || seen.has(value)) continue;
+    const stock = Number(s?.stock);
+    seen.add(value);
+    clean.push({
+      value,
+      stock: Number.isFinite(stock) && stock > 0 ? Math.floor(stock) : 0,
+    });
+  }
+  return clean;
+}
 
 function computeBadge(mrp: number, salePrice: number, manualBadge?: string): string | null {
   const pct =
@@ -200,7 +226,10 @@ export async function saveProduct(input: SaveProductInput): Promise<SaveProductR
       original_price: input.original_price ?? salePrice,
       badge: computeBadge(mrp, salePrice, input.badge),
       category_id: input.category_id,
-      attributes: validated.clean ?? {},
+      attributes: {
+        ...(validated.clean ?? {}),
+        sizes: sanitizeSizes(input.sizes),
+      },
       stock_quantity: input.stock_quantity,
       description: input.description || '',
       image_url: primary?.large || input.image_large || input.image_url || '/images/placeholder.jpg',

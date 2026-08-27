@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Product } from '@/types';
+import { Product, ProductVariant } from '@/types';
 import { createClient } from '@/lib/supabase/client';
 import { toProductCard } from '@/lib/products';
 import {
@@ -15,14 +15,20 @@ import {
 export interface CartItem {
   product: Product;
   quantity: number;
+  /** Selected size/option (e.g. "Free Size") when the product offers variants. */
+  selected_variant?: ProductVariant;
 }
 
 interface CartContextType {
   cart: CartItem[];
   isCartLoading: boolean;
-  addToCart: (product: Product, quantity?: number) => Promise<{ success: boolean; error?: string }>;
-  removeFromCart: (productId: Product['id']) => void;
-  updateQuantity: (productId: Product['id'], quantity: number) => void;
+  addToCart: (
+    product: Product,
+    quantity?: number,
+    selected_variant?: ProductVariant
+  ) => Promise<{ success: boolean; error?: string }>;
+  removeFromCart: (productId: Product['id'], variantValue?: string) => void;
+  updateQuantity: (productId: Product['id'], quantity: number, variantValue?: string) => void;
   clearCart: () => void;
   cartTotal: number;
   cartCount: number;
@@ -31,6 +37,11 @@ interface CartContextType {
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 const GUEST_CART_KEY = 'janya_cart';
+
+/** Uniquely identifies a cart line: product + selected variant ("" = none). */
+function lineKey(id: Product['id'], variantValue?: string): string {
+  return `${String(id)}::${variantValue || ''}`;
+}
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -63,7 +74,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const loadServerCart = useCallback(async () => {
     try {
       const supabase = createClient();
-      const { data: rows, error } = await supabase.from('cart_items').select('product_id, quantity');
+      const { data: rows, error } = await supabase.from('cart_items').select('product_id, quantity, variant');
       if (error) {
         setCart([]);
         return;
@@ -75,7 +86,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         const prodMap = new Map((products || []).map((p: any) => [String(p.id), p]));
         (rows || []).forEach((r: any) => {
           const raw = prodMap.get(String(r.product_id));
-          if (raw) items.push({ product: toProductCard(raw), quantity: r.quantity });
+          if (!raw) return;
+          const variantValue = (r.variant as string) || '';
+          items.push({
+            product: toProductCard(raw),
+            quantity: r.quantity,
+            selected_variant: variantValue
+              ? { variant_type: 'SIZE', variant_value: variantValue, stock_quantity: 0 }
+              : undefined,
+          });
         });
       }
       setCart(items);
@@ -149,10 +168,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [cart, sessionUser, isCartLoading, saveGuestCart]);
 
   const addToCart = useCallback(
-    async (product: Product, quantity = 1): Promise<{ success: boolean; error?: string }> => {
+    async (
+      product: Product,
+      quantity = 1,
+      selected_variant?: ProductVariant
+    ): Promise<{ success: boolean; error?: string }> => {
       const qty = Math.max(1, Math.floor(quantity) || 1);
+      const variantValue = selected_variant?.variant_value || '';
+      const key = lineKey(product.id, variantValue);
       if (sessionUser) {
-        const res = await addCartItem(String(product.id), qty);
+        const res = await addCartItem(String(product.id), qty, variantValue);
         if (res.success) {
           await loadServerCart();
           return { success: true };
@@ -161,20 +186,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Guest: validate against the product snapshot we have.
-      const stock = product.stock_quantity;
+      const stock = selected_variant ? selected_variant.stock_quantity : product.stock_quantity;
       if (product.in_stock === false || (typeof stock === 'number' && stock <= 0)) {
         return { success: false, error: 'Product is currently out of stock.' };
       }
       const maxQty = typeof stock === 'number' ? stock : Infinity;
       setCart((prev) => {
-        const idx = prev.findIndex((i) => String(i.product.id) === String(product.id));
+        const idx = prev.findIndex(
+          (i) => lineKey(i.product.id, i.selected_variant?.variant_value) === key
+        );
         if (idx > -1) {
           const nextQty = Math.min(prev[idx].quantity + qty, maxQty);
           const next = [...prev];
           next[idx] = { ...next[idx], quantity: nextQty };
           return next;
         }
-        return [...prev, { product, quantity: qty }];
+        return [...prev, { product, quantity: qty, selected_variant }];
       });
       return { success: true };
     },
@@ -182,18 +209,21 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateQuantity = useCallback(
-    async (productId: Product['id'], quantity: number) => {
+    async (productId: Product['id'], quantity: number, variantValue = '') => {
       const qty = Math.max(1, Math.floor(quantity) || 1);
+      const key = lineKey(productId, variantValue);
       if (sessionUser) {
-        const res = await updateCartItemAction(String(productId), qty);
+        const res = await updateCartItemAction(String(productId), qty, variantValue);
         if (res.success) await loadServerCart();
       } else {
         setCart((prev) =>
-          prev.map((i) =>
-            String(i.product.id) === String(productId)
-              ? { ...i, quantity: Math.min(qty, i.product.stock_quantity ?? Infinity) }
-              : i
-          )
+          prev.map((i) => {
+            if (lineKey(i.product.id, i.selected_variant?.variant_value) !== key) return i;
+            const maxStock = i.selected_variant
+              ? i.selected_variant.stock_quantity
+              : (i.product.stock_quantity ?? Infinity);
+            return { ...i, quantity: Math.min(qty, maxStock) };
+          })
         );
       }
     },
@@ -201,13 +231,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   );
 
   const removeFromCart = useCallback(
-    (productId: Product['id']) => {
+    (productId: Product['id'], variantValue = '') => {
+      const key = lineKey(productId, variantValue);
       if (sessionUser) {
-        removeCartItemAction(String(productId)).then((res) => {
+        removeCartItemAction(String(productId), variantValue).then((res) => {
           if (res.success) loadServerCart();
         });
       } else {
-        setCart((prev) => prev.filter((i) => String(i.product.id) !== String(productId)));
+        setCart((prev) =>
+          prev.filter((i) => lineKey(i.product.id, i.selected_variant?.variant_value) !== key)
+        );
       }
     },
     [sessionUser, loadServerCart]

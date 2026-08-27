@@ -108,3 +108,12 @@ export function computeReviewSummary(reviews: ProductReview[]): ReviewSummary {
     distribution,
   };
 }
+
+/**
+ * Review summary (average + count) for a single product, computed from approved
+ * reviews only. Used by the product page header — never fabricates ratings.
+ */
+export async function getProductReviewSummary(productId: string): Promise<ReviewSummary> {
+  const reviews = await getProductReviews(productId, 200);
+  return computeReviewSummary(reviews);
+}

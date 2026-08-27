@@ -43,6 +43,14 @@ export interface ProductVariant {
   sku?: string;
 }
 
+// A single size/option a product offers (stored in products.attributes.sizes).
+// "Free Size" is a normal option value — available universally, never
+// hardcoded to any one category.
+export interface SizeOption {
+  value: string;
+  stock: number;
+}
+
 // Product Interface
 export interface Product {
   id: string | number;
@@ -66,6 +74,8 @@ export interface Product {
   images: string[]; // Up to 5 image URLs from Cloudinary/Supabase
   is_featured: boolean;
   is_new_arrival: boolean;
+  /** Optional size/option list (e.g. ["S","M","L","Free Size"] + stock). */
+  sizes?: SizeOption[];
   variants?: ProductVariant[];
   created_at?: string;
   updated_at?: string;

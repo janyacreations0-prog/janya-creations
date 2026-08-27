@@ -1,17 +1,16 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { 
   Search, ShoppingBag, Heart, Menu, X, User, 
-  LogOut, Shield, UserCircle 
+  LogOut, Shield, UserCircle, Package, Phone, ChevronDown
 } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useWishlist } from '@/context/WishlistContext';
 import { createClient } from '@/lib/supabase/client';
-import { ChevronDown } from 'lucide-react';
 import type { CategoryWithChildren } from '@/types';
 
 interface NavbarProps {
@@ -24,6 +23,9 @@ export default function Navbar({ categories }: NavbarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [session, setSession] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userName, setUserName] = useState('');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   const { cartCount } = useCart();
   const { wishlistCount } = useWishlist();
@@ -46,9 +48,28 @@ export default function Navbar({ categories }: NavbarProps) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Close the profile dropdown on outside click or Escape.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setProfileOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
   const checkIfAdmin = async (session: any, supabase: any) => {
     if (!session?.user) {
       setIsAdmin(false);
+      setUserName('');
       return;
     }
 
@@ -57,18 +78,21 @@ export default function Navbar({ categories }: NavbarProps) {
       // hardcoded email strings.
       const { data, error } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, full_name')
         .eq('id', session.user.id)
         .maybeSingle();
 
       if (error || !data) {
         setIsAdmin(false);
+        setUserName('');
         return;
       }
 
       setIsAdmin(data.role === 'admin');
+      setUserName(data.full_name || '');
     } catch {
       setIsAdmin(false);
+      setUserName('');
     }
   };
 
@@ -81,6 +105,8 @@ export default function Navbar({ categories }: NavbarProps) {
       // Clear all state
       setSession(null);
       setIsAdmin(false);
+      setUserName('');
+      setProfileOpen(false);
       setIsMobileMenuOpen(false);
       
       // Redirect to home and refresh
@@ -90,6 +116,12 @@ export default function Navbar({ categories }: NavbarProps) {
       console.error('Logout error:', error);
     }
   };
+
+  const closeProfile = () => setProfileOpen(false);
+
+  const profileLinkClass =
+    'flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-rose-50 hover:text-rose-600 transition-colors';
+  const profileIconClass = 'w-4 h-4 text-gray-400 group-hover:text-rose-500';
 
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
@@ -183,15 +215,59 @@ export default function Navbar({ categories }: NavbarProps) {
             {/* User Section - Dynamic based on login state */}
             {session ? (
               <>
-                {/* Profile Link */}
-                <Link
-                  href="/profile"
-                  className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                  aria-label="Profile"
-                >
-                  <UserCircle className="w-5 h-5" />
-                  <span className="text-[10px] font-medium mt-0.5">Profile</span>
-                </Link>
+                {/* Profile dropdown (desktop) */}
+                <div className="relative" ref={profileRef}>
+                  <button
+                    onClick={() => setProfileOpen((o) => !o)}
+                    className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    aria-label="Profile"
+                    aria-haspopup="menu"
+                    aria-expanded={profileOpen}
+                  >
+                    <UserCircle className="w-5 h-5" />
+                    <span className="text-[10px] font-medium mt-0.5">Profile</span>
+                  </button>
+
+                  {profileOpen && (
+                    <div
+                      className="absolute right-0 top-full mt-2 w-64 bg-white border border-gray-100 rounded-xl shadow-xl z-50 overflow-hidden"
+                      role="menu"
+                      aria-label="Account menu"
+                    >
+                      <div className="px-5 py-4 border-b border-gray-100">
+                        <p className="text-sm font-bold text-gray-900">
+                          {userName ? `Welcome, ${userName}` : 'Welcome'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5 truncate">{session.user?.email}</p>
+                      </div>
+                      <div className="py-1.5">
+                        <Link href="/profile" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group`}>
+                          <UserCircle className={profileIconClass} /> My Profile
+                        </Link>
+                        <Link href="/orders" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group`}>
+                          <Package className={profileIconClass} /> My Orders
+                        </Link>
+                        <Link href="/wishlist" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group`}>
+                          <Heart className={profileIconClass} /> Wishlist
+                        </Link>
+                        {isAdmin && (
+                          <Link href="/admin" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group text-rose-600 font-medium`}>
+                            <Shield className={profileIconClass} /> Admin Portal
+                          </Link>
+                        )}
+                      </div>
+                      <div className="border-t border-gray-100 py-1.5">
+                        <button
+                          onClick={() => { closeProfile(); handleLogout(); }}
+                          role="menuitem"
+                          className={`${profileLinkClass} group text-red-600 hover:bg-red-50 hover:text-red-700`}
+                        >
+                          <LogOut className={profileIconClass} /> Logout
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Admin Link - Only show if user is admin */}
                 {isAdmin && (
@@ -216,15 +292,55 @@ export default function Navbar({ categories }: NavbarProps) {
                 </button>
               </>
             ) : (
-              // Login Link - For guest users
-              <Link
-                href="/login"
-                className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                aria-label="Login"
-              >
-                <User className="w-5 h-5" />
-                <span className="text-[10px] font-medium mt-0.5">Login</span>
-              </Link>
+              <>
+                {/* Guest profile dropdown (desktop) */}
+                <div className="relative" ref={profileRef}>
+                  <button
+                    onClick={() => setProfileOpen((o) => !o)}
+                    className="hidden sm:flex flex-col items-center justify-center w-12 h-11 text-gray-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    aria-label="Account"
+                    aria-haspopup="menu"
+                    aria-expanded={profileOpen}
+                  >
+                    <User className="w-5 h-5" />
+                    <span className="text-[10px] font-medium mt-0.5">Login</span>
+                  </button>
+
+                  {profileOpen && (
+                    <div
+                      className="absolute right-0 top-full mt-2 w-64 bg-white border border-gray-100 rounded-xl shadow-xl z-50 overflow-hidden"
+                      role="menu"
+                      aria-label="Account menu"
+                    >
+                      <div className="px-5 py-4 border-b border-gray-100">
+                        <p className="text-sm font-bold text-gray-900">Welcome</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Access your account and manage orders</p>
+                      </div>
+                      <div className="p-3">
+                        <Link
+                          href="/login"
+                          onClick={closeProfile}
+                          role="menuitem"
+                          className="block w-full text-center bg-rose-600 hover:bg-rose-700 text-white py-2.5 rounded-lg text-xs font-bold transition-colors"
+                        >
+                          LOGIN / SIGNUP
+                        </Link>
+                      </div>
+                      <div className="py-1.5 border-t border-gray-100">
+                        <Link href="/orders" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group`}>
+                          <Package className={profileIconClass} /> Orders
+                        </Link>
+                        <Link href="/wishlist" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group`}>
+                          <Heart className={profileIconClass} /> Wishlist
+                        </Link>
+                        <Link href="/contact" onClick={closeProfile} role="menuitem" className={`${profileLinkClass} group`}>
+                          <Phone className={profileIconClass} /> Contact Us
+                        </Link>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
             {/* Wishlist */}

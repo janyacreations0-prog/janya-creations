@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import { parseSizes } from '@/lib/sizes';
+import type { SizeOption } from '@/types';
 
 export interface Product {
   id: string | number;
@@ -19,12 +21,24 @@ export interface Product {
   image_medium?: string;
   image_thumbnail?: string;
   images?: string[];
+  /** Up to 4 gallery image sets from the product_images table (position 0-3). */
+  gallery?: ProductGalleryItem[];
+  /** Optional size/option list (e.g. ["S","M","L","Free Size"] + stock). */
+  sizes?: SizeOption[];
   material?: string;
   plating?: string;
   is_featured?: boolean;
   is_new_arrival?: boolean;
   in_stock?: boolean;
   stock_quantity?: number;
+}
+
+/** A single gallery image set stored in public.product_images. */
+export interface ProductGalleryItem {
+  original?: string | null;
+  large?: string | null;
+  medium?: string | null;
+  thumbnail?: string | null;
 }
 
 export async function getProducts(): Promise<Product[]> {
@@ -75,7 +89,29 @@ export async function getProductById(id: string): Promise<Product | null> {
     console.error('Error fetching product:', error.message);
     return null;
   }
-  return (data as Product) || null;
+  const product = (data as Product) || null;
+
+  // Attach the up-to-4 gallery images (public product_images table), ordered by
+  // position. Falls back to the legacy single-image columns if none exist.
+  if (product) {
+    const { data: galleryData, error: galleryError } = await supabase
+      .from('product_images')
+      .select('original_url, large_url, medium_url, thumbnail_url')
+      .eq('product_id', id)
+      .order('position', { ascending: true });
+    if (galleryError) {
+      console.error('Error fetching product gallery:', galleryError.message);
+    } else if (galleryData && galleryData.length > 0) {
+      product.gallery = galleryData.map((g: any) => ({
+        original: g.original_url,
+        large: g.large_url,
+        medium: g.medium_url,
+        thumbnail: g.thumbnail_url,
+      }));
+    }
+  }
+
+  return product;
 }
 
 /**
@@ -116,6 +152,7 @@ export function toProductCard(raw: any): any {
     images: raw.images?.length ? raw.images : [cardImage],
     image_thumbnail: cardImage,
     image_url: raw.image_url,
+    sizes: parseSizes(raw.attributes),
     category: raw.category,
     category_id: raw.category_id ?? null,
     attributes: raw.attributes ?? {},
@@ -156,4 +193,84 @@ export async function getProductsByCategoryIds(
     return { products: [], count: 0 };
   }
   return { products: data || [], count: count || 0 };
+}
+
+// Projected listing fields used by recommendations (no SELECT *).
+const SIMILAR_PRODUCT_PROJECTION =
+  'id, title, name, price, original_price, category_id, category, image_thumbnail, image_url, badge, stock_quantity, created_at';
+
+/**
+ * Fetches similar products for a product detail page.
+ * Priority: same subcategory (leaf category) → fall back to the parent
+ * category's subcategories. Prefers in-stock products, excludes the current
+ * product, and is a limited, projected query (no full-table scan).
+ */
+export async function getSimilarProducts(
+  product: { id: string; category_id?: string | null },
+  limit = 8
+): Promise<Product[]> {
+  const currentId = String(product.id);
+  const leafId = product.category_id ? String(product.category_id) : null;
+  if (!leafId || limit <= 0) return [];
+
+  const run = async (categoryIds: string[], inStockOnly: boolean, take: number) => {
+    if (categoryIds.length === 0 || take <= 0) return [] as Product[];
+    let query = supabase
+      .from('products')
+      .select(SIMILAR_PRODUCT_PROJECTION)
+      .in('category_id', categoryIds)
+      .neq('id', currentId);
+    if (inStockOnly) query = query.gt('stock_quantity', 0);
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .limit(take);
+    if (error) {
+      console.error('Error fetching similar products:', error.message);
+      return [] as Product[];
+    }
+    return (data || []) as Product[];
+  };
+
+  const mergeUnique = (list: Product[], extra: Product[]) => {
+    const seen = new Set(list.map((p) => String(p.id)));
+    const out = [...list];
+    for (const p of extra) {
+      if (!seen.has(String(p.id))) {
+        seen.add(String(p.id));
+        out.push(p);
+      }
+    }
+    return out;
+  };
+
+  // Resolve the parent (top-level) category for fallback.
+  let parentId: string | null = null;
+  const { data: leafCat } = await supabase
+    .from('categories')
+    .select('id, parent_id')
+    .eq('id', leafId)
+    .maybeSingle();
+  parentId = leafCat?.parent_id ? String(leafCat.parent_id) : null;
+
+  // 1) Same subcategory — in stock first, then fill from any stock.
+  let similar = await run([leafId], true, limit);
+  if (similar.length < limit) {
+    similar = mergeUnique(similar, await run([leafId], false, limit));
+  }
+
+  // 2) Fall back to the parent category if we still have too few.
+  if (similar.length < 4 && parentId) {
+    const { data: siblings } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('parent_id', parentId);
+    const siblingIds = (siblings || []).map((c: any) => String(c.id));
+    const parentList = mergeUnique(
+      await run(siblingIds, true, limit),
+      await run(siblingIds, false, limit)
+    );
+    similar = mergeUnique(similar, parentList);
+  }
+
+  return similar.slice(0, limit);
 }

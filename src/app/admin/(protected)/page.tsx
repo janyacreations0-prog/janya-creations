@@ -15,7 +15,8 @@ import {
 } from 'lucide-react';
 import { saveProduct } from '@/lib/admin-actions';
 import { mergeAttributeSchemas } from '@/lib/categories';
-import type { CategoryAttributeDefinition } from '@/types';
+import { parseSizes, FREE_SIZE } from '@/lib/sizes';
+import type { CategoryAttributeDefinition, SizeOption } from '@/types';
 
 interface Product {
   id: string;
@@ -62,6 +63,7 @@ function emptyForm() {
     image_medium: '',
     image_thumbnail: '',
     gallery: [] as GalleryImage[],
+    sizes: [] as SizeOption[],
     attributes: {} as Record<string, unknown>,
   };
 }
@@ -225,6 +227,28 @@ export default function AdminPage() {
   useEffect(() => {
     setFormDirty(formSnapshotRef.current !== JSON.stringify(formData));
   }, [formData]);
+
+  const updateSize = (index: number, patch: Partial<SizeOption>) => {
+    setFormData((f) => {
+      const sizes = f.sizes.map((s, i) => (i === index ? { ...s, ...patch } : s));
+      return { ...f, sizes };
+    });
+  };
+
+  const addSize = (value = '', stock = 0) => {
+    setFormData((f) => ({ ...f, sizes: [...f.sizes, { value, stock }] }));
+  };
+
+  const addFreeSize = () => {
+    setFormData((f) => {
+      if (f.sizes.some((s) => s.value === FREE_SIZE)) return f;
+      return { ...f, sizes: [...f.sizes, { value: FREE_SIZE, stock: 0 }] };
+    });
+  };
+
+  const removeSize = (index: number) => {
+    setFormData((f) => ({ ...f, sizes: f.sizes.filter((_, i) => i !== index) }));
+  };
 
   useEffect(() => {
     checkAuth();
@@ -460,6 +484,7 @@ export default function AdminPage() {
       image_medium: product.image_medium || '',
       image_thumbnail: product.image_thumbnail || '',
       gallery,
+      sizes: parseSizes(product.attributes),
       attributes,
     };
     setFormData(nextForm);
@@ -556,6 +581,7 @@ export default function AdminPage() {
         gallery: formData.gallery.map(({ original, large, medium, thumbnail }) => ({
           original, large, medium, thumbnail,
         })),
+        sizes: formData.sizes.map((s) => ({ value: s.value, stock: s.stock })),
         attributes,
         legacyCategoryName: editingProduct ? undefined : topCategory?.name,
       });
@@ -963,6 +989,72 @@ export default function AdminPage() {
                     min="0"
                     placeholder="10"
                   />
+                </div>
+                <div className="md:col-span-2 border-t border-gray-200 pt-4 mt-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                        Sizes / Options
+                      </p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        Optional. Add the sizes this product actually offers (e.g. XS, M, L, Free Size).
+                        "Free Size" is available for every category. Leave empty to disable variants.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={addFreeSize}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-100 text-amber-800 hover:bg-amber-200 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                      >
+                        + Free Size
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addSize()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add Size
+                      </button>
+                    </div>
+                  </div>
+
+                  {formData.sizes.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic">No sizes configured — this product has no size options.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {formData.sizes.map((size, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={size.value}
+                            onChange={(e) => updateSize(idx, { value: e.target.value })}
+                            placeholder={FREE_SIZE}
+                            aria-label={`Size option ${idx + 1} name`}
+                            className="w-48 p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
+                          />
+                          <input
+                            type="number"
+                            value={size.stock}
+                            onChange={(e) => updateSize(idx, { stock: e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)) })}
+                            min="0"
+                            aria-label={`${size.value || `Option ${idx + 1}`} stock`}
+                            placeholder="Stock"
+                            className="w-24 p-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 outline-none"
+                          />
+                          <span className="text-[11px] text-gray-400">units</span>
+                          <button
+                            type="button"
+                            onClick={() => removeSize(idx)}
+                            aria-label={`Remove ${size.value || `option ${idx + 1}`}`}
+                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {attributeSchema.length > 0 && (
                   <div className="md:col-span-2 border-t border-gray-200 pt-4 mt-2">

@@ -292,8 +292,10 @@ export default function CheckoutPage() {
                 <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                   {cart.map((item) => {
                     const unit = item.product.discount_price || item.product.price;
+                    const variantValue = item.selected_variant?.variant_value || '';
+                    const lineKey = `${String(item.product.id)}::${variantValue}`;
                     return (
-                      <div key={item.product.id} className="flex items-center gap-3">
+                      <div key={lineKey} className="flex items-center gap-3">
                         <img
                           src={item.product.images?.[0] || 'https://via.placeholder.com/60'}
                           alt={item.product.title}
@@ -301,6 +303,9 @@ export default function CheckoutPage() {
                         />
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-medium text-gray-800 line-clamp-1">{item.product.title}</p>
+                          {variantValue && (
+                            <p className="text-[11px] text-gray-500">Size: {variantValue}</p>
+                          )}
                           <p className="text-xs text-gray-500">Qty {item.quantity}</p>
                         </div>
                         <p className="text-xs font-bold text-gray-900">₹{unit * item.quantity}</p>

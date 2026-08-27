@@ -4,8 +4,9 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Heart, ShoppingBag } from 'lucide-react';
-import { Product } from '@/types';
+import { Product, ProductVariant } from '@/types';
 import { formatPrice, calculateDiscount } from '@/lib/utils';
+import { defaultSizeOption } from '@/lib/sizes';
 import { useWishlist } from '@/context/WishlistContext';
 import { useCart } from '@/context/CartContext';
 
@@ -22,7 +23,14 @@ export default function ProductCard({ product }: ProductCardProps) {
 
   const isWishlisted = isInWishlist(product.id);
   const discountPercent = calculateDiscount(product.price, product.discount_price);
-  const outOfStock = !product.in_stock || (typeof product.stock_quantity === 'number' && product.stock_quantity <= 0);
+  const sizes = product.sizes ?? [];
+  const hasVariants = sizes.length > 0;
+  const anyVariantStock = hasVariants ? sizes.some((s) => s.stock > 0) : true;
+  const outOfStock =
+    !product.in_stock ||
+    (hasVariants
+      ? !anyVariantStock
+      : typeof product.stock_quantity === 'number' && product.stock_quantity <= 0);
 
   // Prefer the small 300px thumbnail for listing cards. Large images are only
   // used on the product detail page.
@@ -34,7 +42,13 @@ export default function ProductCard({ product }: ProductCardProps) {
   const handleQuickAdd = async () => {
     if (outOfStock) return;
     setError('');
-    const res = await addToCart(product, 1);
+    // Sized products quick-add the default (first in-stock) option so the size
+    // is never lost; the cart page shows which size was added.
+    const opt = defaultSizeOption(sizes);
+    const variant: ProductVariant | undefined = opt
+      ? { variant_type: 'SIZE', variant_value: opt.value, stock_quantity: opt.stock }
+      : undefined;
+    const res = await addToCart(product, 1, variant);
     if (res.success) {
       setAdded(true);
       setTimeout(() => setAdded(false), 2000);

@@ -1,18 +1,37 @@
-import { getProductById } from '@/lib/products';
+import { getProductById, getSimilarProducts, toProductCard } from '@/lib/products';
 import { getCategoryById, mergeAttributeSchemas } from '@/lib/categories';
-import Image from 'next/image';
+import { getProductReviewSummary } from '@/lib/reviews';
+import { parseSizes } from '@/lib/sizes';
+import { calculateDiscount, formatPrice } from '@/lib/utils';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { ChevronRight, Star } from 'lucide-react';
 import ProductActions from '@/components/product/ProductActions';
+import ProductImageGallery, { type ProductGalleryImage } from '@/components/product/ProductImageGallery';
 import ProductReviewsSection from '@/components/reviews/ProductReviewsSection';
-import BackButton from '@/components/ui/BackButton';
-import { Home } from 'lucide-react';
+import ProductCard from '@/components/product/ProductCard';
 import type { Category } from '@/types';
 
 interface ProductPageProps {
   params: Promise<{
     id: string;
   }>;
+}
+
+const FALLBACK_IMAGE =
+  'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800';
+
+function Stars({ value, size = 'w-4 h-4' }: { value: number; size?: string }) {
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-label={`${value.toFixed(1)} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Star
+          key={i}
+          className={`${size} ${i <= Math.round(value) ? 'fill-amber-400 text-amber-400' : 'text-gray-300'}`}
+        />
+      ))}
+    </span>
+  );
 }
 
 export default async function ProductDetailPage({ params }: ProductPageProps) {
@@ -23,31 +42,40 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     notFound();
   }
 
-  // Fallback image handling
-  const fallbackImage =
-    'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=800';
+  const productTitle = String(rawProduct.title || rawProduct.name || 'Janya Product');
 
-  // Get image from images array (if exists) or use fallback
-  let imageUrl = fallbackImage;
-  if (rawProduct.images && Array.isArray(rawProduct.images) && rawProduct.images.length > 0) {
-    imageUrl = rawProduct.images[0];
-  } else if (rawProduct.image_url) {
-    imageUrl = rawProduct.image_url;
-  } else if (rawProduct.image_large) {
-    imageUrl = rawProduct.image_large;
-  } else if (rawProduct.image_medium) {
-    imageUrl = rawProduct.image_medium;
+  // --- Gallery (product_images up to 4, with legacy fallback) ---
+  const galleryImages: ProductGalleryImage[] =
+    rawProduct.gallery?.map((g, i) => ({
+      key: `${rawProduct.id}-gallery-${i}`,
+      large: g.large || undefined,
+      medium: g.medium || undefined,
+      thumbnail: g.thumbnail || undefined,
+      alt: `${productTitle} image ${i + 1}`,
+    })) ?? [];
+
+  if (galleryImages.length === 0) {
+    galleryImages.push({
+      key: `${rawProduct.id}-legacy`,
+      large: rawProduct.image_large || rawProduct.image_url || undefined,
+      medium: rawProduct.image_medium || undefined,
+      thumbnail: rawProduct.image_thumbnail || undefined,
+      alt: productTitle,
+    });
   }
 
-  // Normalize product structure for client actions
+  const primaryImage = galleryImages[0]?.large || galleryImages[0]?.medium || FALLBACK_IMAGE;
+
+  // --- Normalized product for client actions ---
   const product = {
     id: String(rawProduct.id),
-    title: String(rawProduct.title || rawProduct.name || 'Janya Product'),
+    title: productTitle,
     price: Number(rawProduct.price) || 0,
     discount_price: Number(rawProduct.discount_price || rawProduct.price) || 0,
     material: rawProduct.material || rawProduct.category || '',
     plating: rawProduct.plating || rawProduct.badge || '',
-    images: [imageUrl],
+    images: [primaryImage],
+    sizes: parseSizes(rawProduct.attributes),
     stock_quantity: rawProduct.stock_quantity ?? 0,
     in_stock: rawProduct.in_stock ?? ((rawProduct.stock_quantity ?? 0) > 0),
     is_featured: rawProduct.is_featured ?? true,
@@ -55,7 +83,7 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     slug: rawProduct.slug || '',
   };
 
-  // Category breadcrumb + attribute display (if the product has a category_id)
+  // --- Category breadcrumb + attribute display ---
   let categoryLink: { name: string; href: string } | null = null;
   let parentCategoryLink: { name: string; href: string } | null = null;
   let productCategory = null as (Category & { parent?: Category | null }) | null;
@@ -76,8 +104,7 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     }
   }
 
-  // Friendly attribute rows driven by the category's attribute_schema
-  // (top-level common schema inherited and merged with the subcategory schema).
+  // Friendly attribute rows driven by the category's attribute_schema.
   const attributeRows = (() => {
     const schema = mergeAttributeSchemas(
       productCategory?.parent?.attribute_schema ?? null,
@@ -100,76 +127,109 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     return rows;
   })();
 
+  // --- Real rating summary (approved reviews only) ---
+  const reviewSummary = await getProductReviewSummary(String(rawProduct.id));
+
+  // --- Discount (same formula as the backend authority) ---
+  const mrp = Number(rawProduct.original_price) || 0;
+  const sellingPrice = Number(rawProduct.price) || 0;
+  const discountPct = calculateDiscount(mrp, sellingPrice);
+  const badge = rawProduct.badge?.trim() || null;
+
+  // --- Similar products (projected query, reuses ProductCard) ---
+  const similarProducts = await getSimilarProducts(
+    { id: String(rawProduct.id), category_id: rawProduct.category_id },
+    8
+  );
+
+  // Breadcrumb segments.
+  const crumbs: { label: string; href?: string }[] = [{ label: 'Home', href: '/' }];
+  if (parentCategoryLink) crumbs.push({ label: parentCategoryLink.name, href: parentCategoryLink.href });
+  if (categoryLink) crumbs.push({ label: categoryLink.name, href: categoryLink.href });
+  crumbs.push({ label: productTitle });
+
+  const shortDescription =
+    (rawProduct.description || '').length > 120
+      ? `${(rawProduct.description || '').slice(0, 120).trim()}…`
+      : rawProduct.description || '';
+
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-      {/* Top Navigation Bar (Back & Home Buttons) */}
-      <div className="flex items-center justify-between mb-8 pb-4 border-b border-gray-100">
-        <BackButton />
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1.5 text-xs text-gray-500 mb-6 flex-wrap" aria-label="Breadcrumb">
+        {crumbs.map((c, i) => (
+          <span key={i} className="flex items-center gap-1.5 min-w-0">
+            {i > 0 && <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />}
+            {c.href ? (
+              <Link href={c.href} className="hover:text-rose-600 transition-colors whitespace-nowrap">
+                {c.label}
+              </Link>
+            ) : (
+              <span className="text-gray-700 font-medium truncate max-w-[160px] sm:max-w-[280px]">{c.label}</span>
+            )}
+          </span>
+        ))}
+      </nav>
 
-        <Link
-          href="/"
-          className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-rose-600 transition-colors bg-gray-50 hover:bg-rose-50 px-3.5 py-1.5 rounded-full border border-gray-200"
-        >
-          <Home className="w-3.5 h-3.5" />
-          <span>Home</span>
-        </Link>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-start">
-        <div className="aspect-square relative w-full bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
-          <Image
-            src={imageUrl}
-            alt={product.title}
-            fill
-            priority
-            sizes="(max-width: 768px) 100vw, 50vw"
-            className="object-cover"
-          />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start">
+        {/* Left: gallery */}
+        <div className="w-full">
+          <ProductImageGallery images={galleryImages} alt={productTitle} />
         </div>
 
-        <div className="flex flex-col space-y-6">
-          <div>
-            {/* Category breadcrumb */}
-            <nav className="text-xs text-gray-500 flex items-center gap-1 flex-wrap mb-2">
-              {parentCategoryLink && (
+        {/* Right: product info */}
+        <div className="flex flex-col">
+          {/* Title */}
+          <h1 className="text-2xl sm:text-3xl font-serif font-bold text-gray-900 leading-snug">
+            {productTitle}
+          </h1>
+
+          {/* Rating / review summary — real data only */}
+          {reviewSummary.count > 0 && reviewSummary.average !== null && (
+            <a
+              href="#reviews"
+              className="inline-flex items-center gap-2 mt-3 group"
+              aria-label={`Rated ${reviewSummary.average.toFixed(1)} out of 5, ${reviewSummary.count} reviews`}
+            >
+              <Stars value={reviewSummary.average} />
+              <span className="text-sm font-semibold text-gray-900">{reviewSummary.average.toFixed(1)}</span>
+              <span className="text-xs text-gray-400">|</span>
+              <span className="text-xs text-gray-500 group-hover:text-rose-600 transition-colors">
+                {reviewSummary.count} Review{reviewSummary.count !== 1 ? 's' : ''}
+              </span>
+            </a>
+          )}
+
+          {/* Subtitle / short description */}
+          {shortDescription && (
+            <p className="text-sm text-gray-600 mt-3 leading-relaxed line-clamp-2">{shortDescription}</p>
+          )}
+
+          {/* Price block */}
+          <div className="mt-5 pt-5 border-t border-gray-100">
+            <div className="flex items-end flex-wrap gap-x-3 gap-y-1">
+              <span className="text-2xl sm:text-3xl font-bold text-gray-900 leading-none">
+                {formatPrice(sellingPrice)}
+              </span>
+              {mrp > sellingPrice && (
                 <>
-                  <Link href={parentCategoryLink.href} className="hover:text-rose-600">
-                    {parentCategoryLink.name}
-                  </Link>
-                  <span>/</span>
+                  <span className="text-base text-gray-400 line-through">{formatPrice(mrp)}</span>
+                  <span className="text-sm font-bold text-emerald-600">{discountPct}% OFF</span>
                 </>
               )}
-              {categoryLink ? (
-                <Link href={categoryLink.href} className="hover:text-rose-600 font-medium text-gray-700">
-                  {categoryLink.name}
-                </Link>
-              ) : (
-                <span className="text-gray-400 uppercase tracking-widest">
-                  {rawProduct.category || rawProduct.material || 'Jewellery'}
+              {badge && discountPct === 0 && (
+                <span className="inline-flex items-center bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                  {badge}
                 </span>
               )}
-            </nav>
-            <h1 className="text-3xl font-serif font-bold text-gray-900 mt-2">
-              {product.title}
-            </h1>
-            <p className="text-2xl font-bold text-gray-900 mt-4">₹{product.price}</p>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Inclusive of all taxes</p>
           </div>
 
-          <hr className="border-gray-100" />
-
-          <div>
-            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-2">
-              Description
-            </h2>
-            <p className="text-gray-600 text-sm leading-relaxed">
-              {rawProduct.description ||
-                'Exquisite handcrafted piece crafted with precision and premium quality materials. Perfect for special occasions and everyday elegance.'}
-            </p>
-          </div>
-
+          {/* Attributes (real product attributes only) */}
           {attributeRows.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3">
+            <div className="mt-6">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-3">
                 Product Details
               </h2>
               <div className="border border-gray-100 rounded-lg overflow-hidden">
@@ -188,13 +248,39 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
             </div>
           )}
 
-          {/* Interactive Actions (Client Component) */}
-          <ProductActions product={product} />
+          {/* Purchase section (size selector, stock, qty, add to cart, wishlist) */}
+          <div className="mt-6">
+            <ProductActions product={product} />
+          </div>
+
+          {/* Description */}
+          {rawProduct.description && (
+            <div className="mt-8">
+              <h2 className="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-2">
+                Description
+              </h2>
+              <p className="text-gray-600 text-sm leading-relaxed">{rawProduct.description}</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Customer reviews + ratings */}
-      <ProductReviewsSection productId={String(product.id)} />
+      {/* Customer reviews + ratings (real data) */}
+      <section id="reviews" className="scroll-mt-24">
+        <ProductReviewsSection productId={String(product.id)} />
+      </section>
+
+      {/* Similar products */}
+      {similarProducts.length > 0 && (
+        <section className="mt-12">
+          <h2 className="text-xl font-serif font-bold text-gray-900 mb-6">Similar Products</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+            {similarProducts.map((p) => (
+              <ProductCard key={p.id} product={toProductCard(p)} />
+            ))}
+          </div>
+        </section>
+      )}
     </main>
   );
 }

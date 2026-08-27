@@ -227,15 +227,21 @@ export default function AdminOrdersPage() {
                       <div>
                         <p className="text-xs font-bold text-gray-400 uppercase mb-2">Items</p>
                         <div className="space-y-2">
-                          {(itemsMap[o.id] || []).map((item: any) => (
-                            <div key={item.id} className="flex items-center justify-between gap-3 bg-gray-50 rounded-lg px-3 py-2">
-                              <div className="min-w-0">
-                                <p className="text-sm text-gray-800 line-clamp-1">{item.product_name}</p>
-                                <p className="text-xs text-gray-500">Qty {item.quantity} × ₹{Number(item.unit_price).toLocaleString()}</p>
-                              </div>
-                              <p className="text-sm font-bold text-gray-900">₹{Number(item.line_total).toLocaleString()}</p>
-                            </div>
-                          ))}
+                          {(itemsMap[o.id] || []).map((item: any) => {
+                              const size = item.attributes?.size || null;
+                              return (
+                                <div key={item.id} className="flex items-center justify-between gap-3 bg-gray-50 rounded-lg px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="text-sm text-gray-800 line-clamp-1">{item.product_name}</p>
+                                    <p className="text-xs text-gray-500">
+                                      Qty {item.quantity} × ₹{Number(item.unit_price).toLocaleString()}
+                                      {size ? <span className="text-gray-700 font-medium"> — Size: {size}</span> : null}
+                                    </p>
+                                  </div>
+                                  <p className="text-sm font-bold text-gray-900">₹{Number(item.line_total).toLocaleString()}</p>
+                                </div>
+                              );
+                            })}
                         </div>
                       </div>
 

@@ -7,6 +7,7 @@ import {
   notifyPaymentSuccess,
   notifyOrderStatusChange,
 } from '@/lib/email';
+import { parseSizes } from '@/lib/sizes';
 
 export interface CheckoutCustomerInput {
   name: string;
@@ -68,7 +69,7 @@ export async function createOrder(
     // Read the customer's server cart (RLS: own rows only).
     const { data: cartItems } = await supabase
       .from('cart_items')
-      .select('product_id, quantity');
+      .select('product_id, quantity, variant');
 
     if (!cartItems || cartItems.length === 0) {
       return { success: false, error: 'Your cart is empty.' };
@@ -83,6 +84,13 @@ export async function createOrder(
     const productMap = new Map(
       (products || []).map((p: any) => [String(p.id), p])
     );
+
+    /** Per-variant stock when a size is selected; base stock otherwise. */
+    const availableStock = (product: any, variant: string): number => {
+      if (!variant) return Number(product.stock_quantity) || 0;
+      const opt = parseSizes(product.attributes ?? null).find((s) => s.value === variant);
+      return opt ? opt.stock : 0;
+    };
 
     // Server-side validation + amount calculation.
     let subtotal = 0;
@@ -104,17 +112,22 @@ export async function createOrder(
           error: `A product in your cart is no longer available. Please review your cart.`,
         };
       }
-      const stock = product.stock_quantity ?? 0;
+      const variant = (item.variant as string) || '';
+      const stock = availableStock(product, variant);
       if (stock <= 0) {
         return {
           success: false,
-          error: `"${product.name}" is currently out of stock.`,
+          error: variant
+            ? `"${product.name}" (${variant}) is currently out of stock.`
+            : `"${product.name}" is currently out of stock.`,
         };
       }
       if (item.quantity > stock) {
         return {
           success: false,
-          error: `Only ${stock} unit(s) of "${product.name}" are available. Please update quantity.`,
+          error: variant
+            ? `Only ${stock} unit(s) of "${product.name}" (${variant}) are available. Please update quantity.`
+            : `Only ${stock} unit(s) of "${product.name}" are available. Please update quantity.`,
         };
       }
       const unitPrice = Number(product.price) || 0;
@@ -127,7 +140,10 @@ export async function createOrder(
         unit_price: unitPrice,
         quantity: item.quantity,
         line_total: lineTotal,
-        attributes: product.attributes ?? {},
+        attributes: {
+          ...(product.attributes ?? {}),
+          size: variant || undefined,
+        },
       });
     }
 

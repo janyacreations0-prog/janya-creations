@@ -99,7 +99,17 @@ export default function CartPage() {
                 const live = liveProduct(String(item.product.id));
                 const product = live || item.product;
                 const isUnavailable = !live;
-                const stock = typeof product.stock_quantity === 'number' ? product.stock_quantity : null;
+                const variantValue = item.selected_variant?.variant_value || '';
+                const lineKey = `${String(item.product.id)}::${variantValue}`;
+                const variantStock = variantValue
+                  ? (product.sizes?.find((s) => s.value === variantValue)?.stock ?? 0)
+                  : null;
+                const stock =
+                  variantValue !== ''
+                    ? variantStock
+                    : typeof product.stock_quantity === 'number'
+                      ? product.stock_quantity
+                      : null;
                 const outOfStock = stock !== null && stock <= 0;
                 const stockReduced = stock !== null && item.quantity > stock;
                 const unitPrice = product.discount_price || product.price;
@@ -107,7 +117,7 @@ export default function CartPage() {
 
                 return (
                   <div
-                    key={item.product.id}
+                    key={lineKey}
                     className="bg-white p-4 rounded-lg border border-gray-200 flex items-start justify-between gap-4 shadow-sm"
                   >
                     <div className="flex items-start space-x-4 min-w-0">
@@ -122,6 +132,12 @@ export default function CartPage() {
                             {product.title}
                           </h3>
                         </Link>
+
+                        {variantValue && (
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Size: <span className="font-semibold text-gray-700">{variantValue}</span>
+                          </p>
+                        )}
 
                         {isUnavailable ? (
                           <p className="text-xs font-semibold text-rose-600 mt-1">
@@ -144,7 +160,7 @@ export default function CartPage() {
                         {!isUnavailable && !outOfStock && (
                           <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden mt-2 w-fit">
                             <button
-                              onClick={() => updateQuantity(String(product.id), item.quantity - 1)}
+                              onClick={() => updateQuantity(String(product.id), item.quantity - 1, variantValue)}
                               disabled={item.quantity <= 1}
                               className="px-2.5 py-1.5 text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
                               aria-label="Decrease quantity"
@@ -159,14 +175,14 @@ export default function CartPage() {
                               onChange={(e) => {
                                 const v = parseInt(e.target.value, 10);
                                 if (Number.isFinite(v) && v >= 1) {
-                                  updateQuantity(String(product.id), v);
+                                  updateQuantity(String(product.id), v, variantValue);
                                 }
                               }}
                               className="w-12 text-center text-sm font-semibold text-gray-900 focus:outline-none"
                               aria-label="Quantity"
                             />
                             <button
-                              onClick={() => updateQuantity(String(product.id), item.quantity + 1)}
+                              onClick={() => updateQuantity(String(product.id), item.quantity + 1, variantValue)}
                               disabled={stock !== null && item.quantity >= stock}
                               className="px-2.5 py-1.5 text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
                               aria-label="Increase quantity"
@@ -181,7 +197,7 @@ export default function CartPage() {
                     <div className="flex flex-col items-end gap-2 flex-shrink-0">
                       <p className="text-sm font-bold text-gray-900">₹{lineTotal}</p>
                       <button
-                        onClick={() => removeFromCart(String(item.product.id))}
+                        onClick={() => removeFromCart(String(product.id), variantValue)}
                         className="p-2 text-gray-400 hover:text-rose-600 transition-colors"
                         aria-label="Remove item"
                       >
