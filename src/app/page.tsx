@@ -2,60 +2,26 @@ import Link from 'next/link';
 import Image from 'next/image';
 import ProductCard from '@/components/product/ProductCard';
 import ReviewsSection from '@/components/reviews/ReviewsSection';
+import HeroCarousel from '@/components/home/HeroCarousel';
 import { getFeaturedProducts, toProductCard } from '@/lib/products';
-import { getCategoryTree } from '@/lib/categories';
 import { getReviewSummaries } from '@/lib/reviews';
-import { Sparkles, ShieldCheck, Truck, RefreshCw, ArrowRight } from 'lucide-react';
+import { getHeroSlides, getCategoryCards } from '@/lib/homepage';
+import { ShieldCheck, Truck, RefreshCw, ArrowRight } from 'lucide-react';
 
 // ISR: revalidate the homepage product grid every 5 minutes. The shop/category
 // pages stay fully dynamic, so product availability is never stale for long.
 export const revalidate = 300;
 
 export default async function HomePage() {
+  const heroSlides = await getHeroSlides();
   const featured = await getFeaturedProducts(12);
   const reviewMap = await getReviewSummaries(featured.map((p) => String(p.id)));
-  const topCategories = await getCategoryTree();
+  const categoryCards = await getCategoryCards();
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      {/* Hero Banner */}
-      <section className="relative bg-rose-50 overflow-hidden border-b border-rose-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-24 flex flex-col lg:flex-row items-center justify-between gap-8">
-          <div className="max-w-xl text-center lg:text-left space-y-4">
-            <span className="inline-flex items-center space-x-1 text-xs font-semibold uppercase tracking-widest text-rose-600 bg-rose-100 px-3 py-1 rounded-full">
-              <Sparkles className="w-3.5 h-3.5 mr-1" /> New Festive Collection
-            </span>
-            <h1 className="text-3xl sm:text-5xl font-serif font-bold text-gray-900 leading-tight">
-              Elegance Handcrafted For Every Occasion
-            </h1>
-            <p className="text-sm sm:text-base text-gray-600 leading-relaxed">
-              Explore exquisite artificial jewellery, traditional ethnic clothing, and stylish accessories at Janya Creations.
-            </p>
-            <div className="pt-2 flex flex-wrap justify-center lg:justify-start gap-3">
-              <Link
-                href="/category/artificial-jewellery"
-                className="px-6 py-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold tracking-wider uppercase rounded-md shadow-md transition-all"
-              >
-                Shop Jewellery
-              </Link>
-              <Link
-                href="/category/womens-clothing"
-                className="px-6 py-3 bg-white hover:bg-gray-100 text-gray-900 text-xs font-bold tracking-wider uppercase rounded-md border border-gray-300 transition-all"
-              >
-                Shop Apparel
-              </Link>
-            </div>
-          </div>
-
-          <div className="w-full lg:w-1/2 aspect-[4/3] rounded-2xl overflow-hidden shadow-xl bg-gray-200 relative">
-            <img
-              src="https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&q=80&w=1200"
-              alt="Janya Creations Banner"
-              className="w-full h-full object-cover"
-            />
-          </div>
-        </div>
-      </section>
+      {/* Hero — dynamic product banner carousel (server-selected real products) */}
+      <HeroCarousel slides={heroSlides} />
 
       {/* Trust Badges */}
       <section className="bg-white py-6 border-b border-gray-100">
@@ -85,7 +51,7 @@ export default async function HomePage() {
       </section>
 
       {/* Shop by Category */}
-      {topCategories.length > 0 && (
+      {categoryCards.length > 0 && (
         <section className="bg-white py-12 border-b border-gray-100">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
@@ -95,38 +61,44 @@ export default async function HomePage() {
               </div>
               <Link
                 href="/shop"
-                className="text-xs font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider"
+                className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider transition-colors"
               >
-                View All
+                View All <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {topCategories.map((cat) => (
+            <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+              {categoryCards.map((card) => (
                 <Link
-                  key={cat.id}
-                  href={`/category/${cat.slug}`}
-                  className="group relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                  key={card.id}
+                  href={`/category/${card.slug}`}
+                  className="group flex flex-col rounded-2xl overflow-hidden border border-gray-100 bg-white shadow-sm hover:shadow-md transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                 >
-                  {cat.image_url ? (
-                    <div className="relative h-28 sm:h-36">
+                  {card.image ? (
+                    <div className="relative aspect-[4/3] overflow-hidden">
                       <Image
-                        src={cat.image_url}
-                        alt={cat.name}
+                        src={card.image}
+                        alt={card.name}
                         fill
-                        sizes="(max-width: 640px) 50vw, 25vw"
+                        sizes="(max-width: 768px) 50vw, 25vw"
                         className="object-cover group-hover:scale-105 transition-transform duration-300"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent flex items-end p-3">
-                        <span className="text-white text-sm font-semibold">{cat.name}</span>
-                      </div>
                     </div>
                   ) : (
-                    <div className="h-24 sm:h-28 flex items-center justify-between px-4 bg-rose-50 group-hover:bg-rose-100 transition-colors">
-                      <span className="text-sm font-semibold text-rose-700">{cat.name}</span>
-                      <ArrowRight className="w-4 h-4 text-rose-400 group-hover:translate-x-0.5 transition-transform" />
+                    <div className="relative aspect-[4/3] bg-gradient-to-br from-rose-50 via-rose-100/80 to-rose-50 flex items-center justify-center px-4">
+                      <span className="text-lg font-serif font-bold text-rose-700 text-center">
+                        {card.name}
+                      </span>
                     </div>
                   )}
+
+                  <div className="flex flex-col flex-1 p-4">
+                    <h3 className="text-sm font-bold text-gray-900">{card.name}</h3>
+                    <p className="text-xs text-gray-500 mt-1 line-clamp-2 flex-1">{card.descriptor}</p>
+                    <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 mt-3 group-hover:gap-2 transition-all">
+                      Shop Now <ArrowRight className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
                 </Link>
               ))}
             </div>
@@ -143,9 +115,9 @@ export default async function HomePage() {
           </div>
           <Link
             href="/shop?filter=new-arrivals"
-            className="text-xs font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider"
+            className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 uppercase tracking-wider transition-colors"
           >
-            View All →
+            View All <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
