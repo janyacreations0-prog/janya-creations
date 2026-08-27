@@ -1,6 +1,13 @@
 import Link from 'next/link';
 import { Sparkles, Home, ShoppingBag, Users } from 'lucide-react';
 import { BUSINESS } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'About Us',
+  description:
+    'Learn about Janya Creations — an online store for artificial jewellery, women\'s clothing, accessories and toys.',
+};
 
 export default function AboutUs() {
   return (

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { revalidateCategoryData } from '@/lib/revalidate-categories';
 import { slugify } from '@/lib/utils';
 import ImageUpload from '@/components/admin/ImageUpload';
 import ConfirmDialog from '@/components/admin/ConfirmDialog';
@@ -255,10 +256,12 @@ export default function AdminCategoriesPage() {
       if (editingId) {
         const { error } = await supabase.from('categories').update(payload).eq('id', editingId);
         if (error) throw error;
+        await revalidateCategoryData();
         setSuccess('Category updated successfully');
       } else {
         const { error } = await supabase.from('categories').insert(payload);
         if (error) throw error;
+        await revalidateCategoryData();
         setSuccess('Category created successfully');
       }
       setFormOpen(false);
@@ -277,6 +280,7 @@ export default function AdminCategoriesPage() {
         .update({ is_active: !cat.is_active })
         .eq('id', cat.id);
       if (error) throw error;
+      await revalidateCategoryData();
       await load();
     } catch (err: any) {
       setError(err.message || 'Failed to update category');
@@ -307,6 +311,7 @@ export default function AdminCategoriesPage() {
     try {
       const { error } = await supabase.from('categories').delete().eq('id', String(deleteConfirm.id));
       if (error) throw error;
+      await revalidateCategoryData();
       setSuccess('Category deleted');
       setDeleteConfirm(null);
       await load();

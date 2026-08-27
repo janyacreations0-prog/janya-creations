@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { revalidateCategoryData } from '@/lib/revalidate-categories';
 import type { CategoryAttributeDefinition } from '@/types';
 
 interface AddAttributeValueModalProps {
@@ -114,6 +115,7 @@ export default function AddAttributeValueModal({
         .update({ attribute_schema: schema })
         .eq('id', targetCategoryId);
       if (updateError) throw updateError;
+      await revalidateCategoryData();
       onCreated(trimmed);
       onClose();
     } catch (err: any) {

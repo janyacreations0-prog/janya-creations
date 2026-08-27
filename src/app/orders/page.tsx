@@ -2,6 +2,10 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { ShoppingBag, ChevronRight } from 'lucide-react';
+import { NOINDEX_ROBOTS } from '@/lib/seo';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { robots: NOINDEX_ROBOTS };
 
 export default async function OrdersPage() {
   const supabase = await createClient();

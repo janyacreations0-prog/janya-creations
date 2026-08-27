@@ -2,6 +2,10 @@ import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { CheckCircle2, Package, ArrowLeft } from 'lucide-react';
+import { NOINDEX_ROBOTS } from '@/lib/seo';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { robots: NOINDEX_ROBOTS };
 
 interface OrderDetailProps {
   params: Promise<{ id: string }>;

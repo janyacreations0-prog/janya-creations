@@ -1,8 +1,10 @@
-import { getProductById, getSimilarProducts, toProductCard } from '@/lib/products';
+import { getProductById, getProductSeoData, getSimilarProducts, toProductCard } from '@/lib/products';
 import { getCategoryById, mergeAttributeSchemas } from '@/lib/categories';
 import { getProductReviewSummary, getReviewSummaries } from '@/lib/reviews';
 import { parseSizes } from '@/lib/sizes';
 import { calculateDiscount, formatPrice } from '@/lib/utils';
+import { productJsonLd, breadcrumbJsonLd, absoluteUrl, SITE_NAME } from '@/lib/seo';
+import JsonLd from '@/components/seo/JsonLd';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ChevronRight, Star } from 'lucide-react';
@@ -11,11 +13,46 @@ import ProductImageGallery, { type ProductGalleryImage } from '@/components/prod
 import ProductReviewsSection from '@/components/reviews/ProductReviewsSection';
 import ProductCard from '@/components/product/ProductCard';
 import type { Category } from '@/types';
+import type { Metadata } from 'next';
 
 interface ProductPageProps {
   params: Promise<{
     id: string;
   }>;
+}
+
+export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
+  const { id } = await params;
+  const product = await getProductSeoData(id);
+  if (!product) {
+    return { title: 'Product Not Found', robots: { index: false } };
+  }
+
+  const description =
+    product.description && product.description.trim()
+      ? product.description.trim().slice(0, 160)
+      : `Shop ${product.title} at ${SITE_NAME}.`;
+
+  const title = product.title || 'Product';
+
+  return {
+    title,
+    description,
+    alternates: { canonical: `/products/${product.id}` },
+    openGraph: {
+      title: `${title} | ${SITE_NAME}`,
+      description,
+      url: absoluteUrl(`/products/${product.id}`),
+      type: 'website',
+      images: product.images.length > 0 ? product.images : undefined,
+    },
+    twitter: {
+      card: product.images.length > 0 ? 'summary_large_image' : 'summary',
+      title: `${title} | ${SITE_NAME}`,
+      description,
+      images: product.images.length > 0 ? product.images : undefined,
+    },
+  };
 }
 
 const FALLBACK_IMAGE =
@@ -154,8 +191,30 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
       ? `${(rawProduct.description || '').slice(0, 120).trim()}…`
       : rawProduct.description || '';
 
+  // Structured data (Product + BreadcrumbList) — mirrors visible content.
+  const structuredData = productJsonLd({
+    id: String(rawProduct.id),
+    title: productTitle,
+    description: rawProduct.description || undefined,
+    images: galleryImages.map((g) => g.large || g.medium || '').filter(Boolean),
+    price: sellingPrice,
+    inStock: (rawProduct.stock_quantity ?? 0) > 0,
+    aggregateRating:
+      reviewSummary.count > 0 && reviewSummary.average !== null
+        ? { average: reviewSummary.average, count: reviewSummary.count }
+        : null,
+  });
+  const structuredBreadcrumbs = breadcrumbJsonLd(
+    crumbs
+      .filter((c) => c.href)
+      .map((c) => ({ name: c.label, url: absoluteUrl(c.href as string) }))
+  );
+
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <JsonLd data={structuredData} />
+      <JsonLd data={structuredBreadcrumbs} />
+
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-xs text-gray-500 mb-6 flex-wrap" aria-label="Breadcrumb">
         {crumbs.map((c, i) => (

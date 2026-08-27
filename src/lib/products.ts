@@ -274,3 +274,46 @@ export async function getSimilarProducts(
 
   return similar.slice(0, limit);
 }
+
+/** Lightweight product metadata for SEO/structured-data (projected query). */
+const SEO_PRODUCT_PROJECTION =
+  'id, title, name, price, original_price, badge, description, image_url, image_large, image_medium, image_thumbnail, category, category_id, stock_quantity, created_at';
+
+export interface ProductSeoData {
+  id: string;
+  title: string;
+  price: number;
+  original_price: number | null;
+  badge: string | null;
+  description: string | null;
+  images: string[];
+  inStock: boolean;
+  category_id: string | null;
+  category: string;
+}
+
+export async function getProductSeoData(id: string): Promise<ProductSeoData | null> {
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from('products')
+    .select(SEO_PRODUCT_PROJECTION)
+    .eq('id', id)
+    .maybeSingle();
+  if (error || !data) return null;
+
+  const raw = data as any;
+  const image =
+    raw.image_large || raw.image_medium || raw.image_url || '';
+  return {
+    id: String(raw.id),
+    title: String(raw.title || raw.name || ''),
+    price: Number(raw.price) || 0,
+    original_price: raw.original_price,
+    badge: raw.badge,
+    description: raw.description || null,
+    images: image ? [image] : [],
+    inStock: (raw.stock_quantity ?? Infinity) > 0,
+    category_id: raw.category_id,
+    category: raw.category,
+  };
+}

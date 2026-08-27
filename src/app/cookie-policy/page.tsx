@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { Cookie, Home, Mail } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Cookie Policy',
+  description: 'How Janya Creations uses cookies on our website and how you can control them.',
+};
 
 export default function CookiePolicy() {
   return (

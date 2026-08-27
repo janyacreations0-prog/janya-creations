@@ -6,11 +6,22 @@ import HeroCarousel from '@/components/home/HeroCarousel';
 import { getFeaturedProducts, toProductCard } from '@/lib/products';
 import { getReviewSummaries } from '@/lib/reviews';
 import { getHeroSlides, getCategoryCards } from '@/lib/homepage';
+import { SITE_NAME, SITE_URL, openGraphDefaults } from '@/lib/seo';
 import { ShieldCheck, Truck, RefreshCw, ArrowRight } from 'lucide-react';
+import type { Metadata } from 'next';
 
-// ISR: revalidate the homepage product grid every 5 minutes. The shop/category
-// pages stay fully dynamic, so product availability is never stale for long.
 export const revalidate = 300;
+
+export const metadata: Metadata = {
+  title: 'Artificial Jewellery, Women\'s Clothing, Accessories & Toys',
+  alternates: { canonical: '/' },
+  openGraph: {
+    ...openGraphDefaults,
+    title: 'Artificial Jewellery, Women\'s Clothing, Accessories & Toys',
+    description: 'Shop artificial jewellery, gold plated and anti-tarnish jewellery, women\'s clothing, accessories and toys at Janya Creations.',
+    url: SITE_URL,
+  },
+};
 
 export default async function HomePage() {
   const heroSlides = await getHeroSlides();
@@ -20,6 +31,11 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
+      {/* Primary H1 — the carousel headings are H2, so this keeps a single H1 */}
+      <h1 className="sr-only">
+        {SITE_NAME} — Artificial Jewellery, Women&apos;s Clothing, Accessories &amp; Toys
+      </h1>
+
       {/* Hero — dynamic product banner carousel (server-selected real products) */}
       <HeroCarousel slides={heroSlides} />
 

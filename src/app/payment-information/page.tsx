@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { CreditCard, Home, Mail, ShieldCheck } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Payment Information',
+  description: 'Payment methods accepted at Janya Creations — secure online payments for your orders.',
+};
 
 export default function PaymentInformation() {
   return (

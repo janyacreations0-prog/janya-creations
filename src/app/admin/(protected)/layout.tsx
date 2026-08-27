@@ -2,6 +2,13 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { ShieldAlert } from 'lucide-react';
 import { getAuthUser, isAdminUser } from '@/lib/admin';
+import { NOINDEX_ROBOTS } from '@/lib/seo';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Admin',
+  robots: NOINDEX_ROBOTS,
+};
 
 /**
  * Server-side admin guard for all /admin pages (route group "(protected)").

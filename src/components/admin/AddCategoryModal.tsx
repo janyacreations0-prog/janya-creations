@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { revalidateCategoryData } from '@/lib/revalidate-categories';
 import { slugify } from '@/lib/utils';
 import ImageUpload from '@/components/admin/ImageUpload';
 import type { Category } from '@/types';
@@ -131,6 +132,7 @@ export default function AddCategoryModal({
         .single();
 
       if (insertError) throw insertError;
+      await revalidateCategoryData();
       onCreated(String(data.id));
       onClose();
     } catch (err: any) {

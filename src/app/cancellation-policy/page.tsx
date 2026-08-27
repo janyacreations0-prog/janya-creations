@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { FileText, Home, Mail, Phone } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Cancellation Policy',
+  description: 'Order cancellation policy for Janya Creations — how to cancel an order before shipment.',
+};
 
 export default function CancellationPolicy() {
   return (

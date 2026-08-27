@@ -13,6 +13,7 @@ import ShopToolbar from '@/components/shop/ShopToolbar';
 import Pagination from '@/components/shop/Pagination';
 import { getReviewSummaries } from '@/lib/reviews';
 import type { Category, CategoryAttributeDefinition } from '@/types';
+import type { Metadata } from 'next';
 
 interface ShopPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -30,6 +31,50 @@ const SORT_ORDERS: Record<string, { column: string; ascending: boolean }> = {
   name_asc: { column: 'name', ascending: true },
   name_desc: { column: 'name', ascending: false },
 };
+
+/**
+ * Indexing strategy for /shop:
+ * - Clean /shop            -> index, canonical /shop
+ * - Pagination only (?page) -> index, self-canonical (never to page 1)
+ * - Search/filter/sort URLs -> noindex,follow + canonical to clean /shop
+ *   (avoids indexing thousands of arbitrary filter combinations while keeping
+ *   the clean category pages at /category/[slug] as the indexed landing pages).
+ */
+export async function generateMetadata({
+  searchParams,
+}: ShopPageProps): Promise<Metadata> {
+  const sp = await searchParams;
+  const keys = Object.keys(sp).filter((k) => sp[k] !== undefined && sp[k] !== '');
+  const hasFilters = keys.some((k) => k !== 'page');
+  const isPaginationOnly = keys.length > 0 && keys.every((k) => k === 'page');
+
+  if (hasFilters) {
+    return {
+      title: 'Shop',
+      robots: { index: false, follow: true },
+      alternates: { canonical: '/shop' },
+    };
+  }
+
+  if (isPaginationOnly) {
+    return {
+      title: 'Shop',
+      alternates: { canonical: '/shop' },
+    };
+  }
+
+  return {
+    title: 'Shop Artificial Jewellery, Clothing, Accessories & Toys',
+    description:
+      'Browse artificial jewellery, gold plated and anti-tarnish jewellery, women\'s clothing, accessories and toys at Janya Creations.',
+    alternates: { canonical: '/shop' },
+    openGraph: {
+      title: 'Shop Artificial Jewellery, Clothing, Accessories & Toys',
+      description:
+        'Browse artificial jewellery, gold plated and anti-tarnish jewellery, women\'s clothing, accessories and toys at Janya Creations.',
+    },
+  };
+}
 
 export default async function ShopPage({ searchParams }: ShopPageProps) {
   const sp = await searchParams;

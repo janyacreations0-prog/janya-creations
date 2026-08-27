@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { unstable_cache } from 'next/cache';
 import type { Category, CategoryAttributeDefinition, CategoryWithChildren } from '@/types';
 
 /**
@@ -88,10 +89,25 @@ export function buildCategoryTree(list: Category[]): CategoryWithChildren[] {
   return sortCategories(roots);
 }
 
-/** Storefront tree (active categories only). Used by the navbar/footer. */
-export async function getCategoryTree(): Promise<CategoryWithChildren[]> {
-  const list = await getCategories(false);
-  return buildCategoryTree(list.filter((c) => c.is_active));
+/**
+ * Storefront tree (active categories only). Used by the navbar/footer.
+ *
+ * Cached server-side with a short ISR-style window (300s) so category nav is
+ * fast, but tagged `categories` so that admin mutations can invalidate it
+ * immediately via revalidateTag('categories') / revalidatePath('/', 'layout').
+ * This keeps the Navbar database-driven AND fresh after admin changes.
+ */
+const getCategoryTreeCached = unstable_cache(
+  async (): Promise<CategoryWithChildren[]> => {
+    const list = await getCategories(false);
+    return buildCategoryTree(list.filter((c) => c.is_active));
+  },
+  ['janya-category-tree'],
+  { revalidate: 300, tags: ['categories'] }
+);
+
+export function getCategoryTree(): Promise<CategoryWithChildren[]> {
+  return getCategoryTreeCached();
 }
 
 export async function getCategoryBySlug(slug: string): Promise<Category | null> {

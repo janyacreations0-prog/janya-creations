@@ -32,6 +32,12 @@ export async function TopLevelCategoryView({
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <nav className="text-sm text-gray-500 mb-6 flex items-center gap-1.5 flex-wrap" aria-label="Breadcrumb">
+        <Link href="/" className="hover:text-rose-600">Home</Link>
+        <span>/</span>
+        <span className="text-gray-900 font-medium">{category.name}</span>
+      </nav>
+
       <div className="mb-10">
         {category.image_url ? (
           <div className="relative w-full h-48 md:h-72 rounded-xl overflow-hidden mb-6">

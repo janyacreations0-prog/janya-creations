@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { FileText, Home } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Terms & Conditions',
+  description: 'Terms and conditions governing the use of the Janya Creations online store.',
+};
 
 export default function TermsConditions() {
   return (

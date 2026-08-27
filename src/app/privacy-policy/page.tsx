@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { Shield, Home } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED, businessAddress } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy',
+  description: 'Privacy policy for Janya Creations — how we collect, use and protect your personal information.',
+};
 
 export default function PrivacyPolicy() {
   return (

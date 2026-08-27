@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { Truck, Home, Mail, Phone } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Shipping Policy',
+  description: 'Shipping policy for Janya Creations — free all-India shipping, order processing and delivery timelines.',
+};
 
 export default function ShippingPolicy() {
   return (

@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { RefreshCw, Home, Mail, Phone } from 'lucide-react';
 import { BUSINESS, SITE_UPDATED } from '@/lib/contact';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Returns & Refund Policy',
+  description: 'Returns and refund policy for Janya Creations — how to request a return, refund timelines and eligibility.',
+};
 
 export default function RefundPolicy() {
   return (
