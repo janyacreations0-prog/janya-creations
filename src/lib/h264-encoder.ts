@@ -15,6 +15,23 @@ import * as path from 'path';
  */
 const FFMPEG_PATH: string = require('ffmpeg-static');
 
+// Runtime diagnostic: verify the resolved binary path and presence without
+// logging secrets or full paths.
+try {
+  const exists = fs.existsSync(FFMPEG_PATH);
+  let size = 0;
+  let mode = '';
+  if (exists) {
+    const st = fs.statSync(FFMPEG_PATH);
+    size = st.size;
+    mode = (st.mode & 0o777).toString(8);
+  }
+  console.error(
+    `[reel] h264 decoder: platform=${process.platform} arch=${process.arch} ` +
+    `exists=${exists} size=${size} mode=${mode}`
+  );
+} catch { /* diagnostic best-effort */ }
+
 export function encodeH264(
   frames: Buffer[],
   fps: number,
