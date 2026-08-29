@@ -13,7 +13,7 @@ import * as path from 'path';
  * Vercel /tmp is ephemeral (512 MB) and perfectly suited for this workflow.
  * The file is cleaned up immediately after reading.
  */
-const FFMPEG_PATH = require('ffmpeg-static');
+const FFMPEG_PATH: string = require('ffmpeg-static');
 
 export function encodeH264(
   frames: Buffer[],
@@ -23,6 +23,21 @@ export function encodeH264(
 ): Buffer {
   if (!frames || frames.length === 0) {
     throw new Error('No frames to encode');
+  }
+
+  const start = Date.now();
+
+  // Defensive fix for the common ffmpeg-static-on-Vercel failure: the Lambda
+  // packaging can strip the executable bit, causing spawn EACCES. Only chmod if
+  // the binary is not already executable (idempotent, no-op when already set).
+  try {
+    fs.accessSync(FFMPEG_PATH, fs.constants.X_OK);
+  } catch {
+    try {
+      fs.chmodSync(FFMPEG_PATH, 0o755);
+    } catch (chmodErr: any) {
+      console.error('[reel] h264 chmod failed:', chmodErr?.code || chmodErr?.message || chmodErr);
+    }
   }
 
   const input = Buffer.concat(frames);
@@ -50,10 +65,20 @@ export function encodeH264(
   });
 
   if (result.status !== 0) {
-    // Clean up the temp file if it exists.
+    // Diagnostic-only logging (server-side): NEVER log keys, tokens, cookies or
+    // signed URLs. Only process metadata + ffmpeg output.
+    const stderr = (result.stderr?.toString() ?? '').slice(-400);
+    const stdoutTail = (result.stdout?.toString() ?? '').slice(-100);
+    const spawnError = result.error
+      ? `code=${(result.error as NodeJS.ErrnoException).code} message=${(result.error as NodeJS.ErrnoException).message}`
+      : 'none';
+    console.error(
+      `[reel] H264 ffmpeg result: status=${result.status} signal=${result.signal} error=${spawnError} ` +
+      `frames=${frames.length} fps=${fps} ${width}x${height} elapsed=${Date.now() - start}ms ` +
+      `stderr="${stderr.trim()}" stdout="${stdoutTail.trim()}"`
+    );
     try { fs.unlinkSync(outFile); } catch { /* ignore */ }
-    const stderr = result.stderr?.toString() ?? '';
-    throw new Error(`H.264 encoding failed (exit ${result.status}): ${stderr.slice(-200)}`);
+    throw new Error('H.264 encoding failed. Please try again.');
   }
 
   if (!fs.existsSync(outFile)) {
@@ -66,6 +91,10 @@ export function encodeH264(
   if (mp4.length === 0) {
     throw new Error('H.264 encoding produced an empty output');
   }
+
+  console.error(
+    `[reel] H264 encode ok: ${mp4.length} bytes, ${frames.length} frames, ${width}x${height}, ${Date.now() - start}ms`
+  );
 
   return mp4;
 }
