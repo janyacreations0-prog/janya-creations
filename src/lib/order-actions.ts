@@ -8,6 +8,7 @@ import {
   notifyOrderStatusChange,
 } from '@/lib/email';
 import { parseSizes } from '@/lib/sizes';
+import { buildOrderAttribution, recordEvent } from '@/lib/analytics';
 
 export interface CheckoutCustomerInput {
   name: string;
@@ -160,7 +161,9 @@ export async function createOrder(
       country: clean(input.country) || 'India',
     };
 
-    // Create the DB order (pending / payment pending).
+    // Create the DB order (pending / payment pending). Attribution snapshot is
+    // taken now and stored historically — later session changes never alter it.
+    const attribution = await buildOrderAttribution();
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
@@ -176,6 +179,7 @@ export async function createOrder(
         customer_email: email,
         customer_phone: phone,
         shipping_address: shippingAddress,
+        attribution,
       })
       .select('id, order_number, total_amount')
       .single();
@@ -197,6 +201,8 @@ export async function createOrder(
 
     // Fire order-created notification (graceful; never blocks checkout).
     void notifyOrderCreated(order.id).catch(() => {});
+    // First-party funnel event.
+    void recordEvent('order_created', { orderId: order.id }).catch(() => {});
 
     // Create the PhonePe Standard Checkout order for the server-calculated amount.
     const ppOrder = await createPhonePePayment(
@@ -217,6 +223,12 @@ export async function createOrder(
         },
       };
     }
+
+    // First-party funnel event — payment was initiated at the gateway.
+    void recordEvent('payment_initiated', {
+      orderId: order.id,
+      metadata: { gateway: 'phonepe' },
+    }).catch(() => {});
 
     // Store the gateway order id.
     await supabase

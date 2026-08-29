@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { validatePhonePeCallback } from '@/lib/payments';
 import { notifyPaymentSuccess, notifyPaymentFailed } from '@/lib/email';
+import { recordEventForSession } from '@/lib/analytics';
 
 /**
  * PhonePe Standard Checkout callback.
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
 
   const { data: order } = await admin
     .from('orders')
-    .select('id, order_number, total_amount, payment_status')
+    .select('id, order_number, total_amount, payment_status, attribution')
     .eq('order_number', merchantOrderId)
     .maybeSingle();
 
@@ -63,6 +64,15 @@ export async function POST(request: Request) {
       p_gateway_payment_id: payload.orderId,
     });
     void notifyPaymentSuccess(order.id).catch(() => {});
+
+    // First-party funnel event — attributed to the order's originating session
+    // (the callback itself carries no browser cookies).
+    const attribution = (order.attribution as { session_id?: string } | null) ?? null;
+    void recordEventForSession('payment_success', attribution?.session_id ?? null, {
+      orderId: order.id,
+      metadata: { gateway: 'phonepe', gateway_payment_id: payload.orderId },
+    }).catch(() => {});
+
     return NextResponse.redirect(
       new URL(`/orders/${order.id}?placed=1`, request.url),
       302

@@ -5,6 +5,7 @@ import Footer from '@/components/footer/Footer';
 import CookieConsent from '@/components/CookieConsent';
 import Chatbot from '@/components/chatbot/Chatbot';
 import JsonLd from '@/components/seo/JsonLd';
+import SessionTracker from '@/components/analytics/SessionTracker';
 import {
   SITE_NAME,
   SITE_URL,
@@ -67,6 +68,9 @@ export default function RootLayout({
         {/* Site-wide structured data (Organization + WebSite) */}
         <JsonLd data={organizationJsonLd()} />
         <JsonLd data={websiteJsonLd()} />
+
+        {/* First-party attribution — records the visit session (no PII) */}
+        <SessionTracker />
 
         <WishlistProvider>
           <CartProvider>

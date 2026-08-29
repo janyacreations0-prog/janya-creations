@@ -14,7 +14,7 @@ import {
   ShieldCheck, Package, ShoppingBag, LogOut, TrendingUp,
   Plus, Trash2, Edit2, Eye, Search, ChevronLeft, ChevronRight,
   IndianRupee, Users, AlertTriangle, Loader2, ArrowUp, ArrowDown,
-  ArrowUpDown, X, CheckSquare
+  ArrowUpDown, X, CheckSquare, Film
 } from 'lucide-react';
 import { saveProduct } from '@/lib/admin-actions';
 import { mergeAttributeSchemas } from '@/lib/categories';
@@ -891,6 +891,18 @@ export default function AdminPage() {
             >
               Reports
             </Link>
+            <Link
+              href="/admin/attribution"
+              className="text-xs bg-gray-100 hover:bg-rose-50 text-gray-600 hover:text-rose-600 px-3 py-1.5 rounded-full transition-colors font-medium"
+            >
+              Attribution
+            </Link>
+            <Link
+              href="/admin/reels"
+              className="text-xs bg-gray-100 hover:bg-rose-50 text-gray-600 hover:text-rose-600 px-3 py-1.5 rounded-full transition-colors font-medium"
+            >
+              Reels
+            </Link>
           </div>
           <button
             onClick={handleLogout}
@@ -1547,7 +1559,7 @@ export default function AdminPage() {
                             </button>
                           </td>
 
-                          {/* Actions: View, Edit, Delete */}
+                          {/* Actions: View, Edit, Reel, Delete */}
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-1">
                               <Link
@@ -1567,6 +1579,15 @@ export default function AdminPage() {
                               >
                                 <Edit2 className="w-4 h-4" />
                               </button>
+
+                              <Link
+                                href={`/admin/reels?product=${product.id}`}
+                                aria-label={`Generate Reel for ${product.name}`}
+                                title="Generate Reel"
+                                className="p-1.5 text-gray-400 hover:text-fuchsia-600 hover:bg-fuchsia-50 rounded-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500"
+                              >
+                                <Film className="w-4 h-4" />
+                              </Link>
 
                               <button
                                 onClick={() => requestDeleteSingle(product)}

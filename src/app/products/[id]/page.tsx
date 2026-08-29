@@ -12,6 +12,7 @@ import ProductActions from '@/components/product/ProductActions';
 import ProductImageGallery, { type ProductGalleryImage } from '@/components/product/ProductImageGallery';
 import ProductReviewsSection from '@/components/reviews/ProductReviewsSection';
 import ProductCard from '@/components/product/ProductCard';
+import ProductViewTracker from '@/components/analytics/ProductViewTracker';
 import type { Category } from '@/types';
 import type { Metadata } from 'next';
 
@@ -214,6 +215,8 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <JsonLd data={structuredData} />
       <JsonLd data={structuredBreadcrumbs} />
+      {/* First-party product-view event (fired once per session per product) */}
+      <ProductViewTracker productId={String(rawProduct.id)} />
 
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-xs text-gray-500 mb-6 flex-wrap" aria-label="Breadcrumb">

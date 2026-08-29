@@ -11,6 +11,7 @@ import {
   clearServerCart,
   mergeGuestCart,
 } from '@/lib/cart-actions';
+import { trackAddToCart } from '@/lib/analytics-actions';
 
 export interface CartItem {
   product: Product;
@@ -180,6 +181,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         const res = await addCartItem(String(product.id), qty, variantValue);
         if (res.success) {
           await loadServerCart();
+          void trackAddToCart(String(product.id), variantValue || undefined).catch(() => {});
           return { success: true };
         }
         return { success: false, error: res.error };
@@ -203,6 +205,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         }
         return [...prev, { product, quantity: qty, selected_variant }];
       });
+      void trackAddToCart(String(product.id), variantValue || undefined).catch(() => {});
       return { success: true };
     },
     [sessionUser, loadServerCart]

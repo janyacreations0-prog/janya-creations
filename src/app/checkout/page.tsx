@@ -7,6 +7,7 @@ import { useCart } from '@/context/CartContext';
 import { createClient } from '@/lib/supabase/client';
 import { createOrder } from '@/lib/order-actions';
 import { saveCheckoutAddress } from '@/lib/address-actions';
+import { trackCheckoutStart } from '@/lib/analytics-actions';
 import { ArrowLeft, Home, Lock, ShoppingBag } from 'lucide-react';
 
 export default function CheckoutPage() {
@@ -46,6 +47,14 @@ export default function CheckoutPage() {
           });
       }
     });
+  }, []);
+
+  // First-party funnel event — fires once per browser session on genuine
+  // checkout entry.
+  useEffect(() => {
+    if (window.sessionStorage.getItem('jc_checkout_start')) return;
+    window.sessionStorage.setItem('jc_checkout_start', '1');
+    void trackCheckoutStart().catch(() => {});
   }, []);
 
   const applySavedAddress = (id: string) => {

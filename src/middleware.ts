@@ -1,28 +1,40 @@
-import { type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
+import { applyAttribution } from '@/lib/analytics-middleware';
+
+/**
+ * Middleware:
+ *  - Runs first-party attribution capture (session + UTM cookies) on every
+ *    public page request — pure cookie handling, no auth round-trip, so the
+ *    storefront stays fast.
+ *  - Runs the Supabase auth session refresh ONLY on private/authenticated
+ *    paths (preserving the original performance decision for public pages).
+ */
+const PRIVATE_PREFIXES = [
+  '/admin',
+  '/orders',
+  '/profile',
+  '/checkout',
+  '/login',
+  '/forgot-password',
+  '/reset-password',
+  '/auth',
+  '/api',
+];
 
 export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+  const { pathname } = request.nextUrl;
+  const isPrivate = PRIVATE_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
+
+  const response = isPrivate ? await updateSession(request) : NextResponse.next();
+
+  return applyAttribution(request, response);
 }
 
 export const config = {
   matcher: [
-    /*
-     * Session refresh only runs where an authenticated session is actually
-     * relevant — avoiding a Supabase auth round-trip on public storefront
-     * pages (/, /shop, /category, /products, policies, etc.).
-     *
-     * Public pages render from anonymous/RLS data and manage auth entirely
-     * in the browser, so they skip the middleware entirely.
-     */
-    '/admin/:path*',
-    '/orders/:path*',
-    '/profile/:path*',
-    '/checkout',
-    '/login',
-    '/forgot-password',
-    '/reset-password',
-    '/auth/:path*',
-    '/api/:path*',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|webp|gif|ico|css|js|woff2?|ttf)$).*)',
   ],
 };
