@@ -1,24 +1,32 @@
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
+import * as fs from 'fs';
+import * as path from 'path';
 import { encodeH264 } from '@/lib/h264-encoder';
 
-/**
- * Reel frame generator.
- *
- * Renders 4 scenes (hook / product / price / cta) at 9:16 as JPEG buffers via
- * sharp (already installed), then muxes them into a playable MP4 using the
- * dependency-free MJPEG container writer. Runs entirely on Vercel within
- * function limits — no FFmpeg binary, no WASM x264, no paid service.
- *
- * Frames are ~720x1280 (9:16). Instagram publishing (Phase 3) will re-encode
- * to H.264 while reusing this exact frame pipeline.
- */
+// ── Constants ────────────────────────────────────────────────────────────────
 
 export const REEL_WIDTH = 720;
 export const REEL_HEIGHT = 1280;
 const REEL_FPS = 10;
-const SCENE_SECONDS = 1.5;
-const FRAMES_PER_SCENE = Math.round(SCENE_SECONDS * REEL_FPS); // 15
 const BRAND = 'Janya Creations';
+
+// On Vercel Lambda, /var/task/node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf
+// is present because next is a dependency. Embed it as a data URI so librsvg
+// can always find it — no reliance on stray system fonts.
+const FONT_BASE64 = (() => {
+  try {
+    const fp = path.join(process.cwd(), 'node_modules', 'next', 'dist', 'compiled', '@vercel', 'og', 'noto-sans-v27-latin-regular.ttf');
+    return fs.readFileSync(fp).toString('base64');
+  } catch {
+    return '';
+  }
+})();
+const FONT_FACE = FONT_BASE64
+  ? `<style>@font-face{font-family:'N';src:url(data:font/ttf;base64,${FONT_BASE64})}</style>`
+  : '';
+const FONT_FAMILY = `${FONT_BASE64 ? 'N,' : ''}sans-serif`;
+
+// ── Input Interface ──────────────────────────────────────────────────────────
 
 export interface ReelRenderInput {
   title: string;
@@ -29,6 +37,32 @@ export interface ReelRenderInput {
   destinationLabel: string;
   /** 1..4 public product image URLs. Collection passes multiple. */
   images: string[];
+  /** Optional category name for copy customisation. */
+  categoryName?: string | null;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Strips emoji from strings used in video frames (captions may keep them). */
+function stripEmoji(s: string): string {
+  return s
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
+    .replace(/[✨💛😍❤️🔥💎🌟⭐💫💯👌💪🎉🎊🎁]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+function categoryCopy(cat: string | undefined | null): string {
+  const c = (cat || '').toLowerCase();
+  if (c.includes('jewell')) return 'Effortless elegance, every day';
+  if (c.includes('wear') || c.includes('clothing')) return 'Style that feels as good as it looks';
+  if (c.includes('accessor')) return 'Small detail. Big difference.';
+  if (c.includes('toy')) return 'Fun finds for little ones';
+  return 'Made to complete your look';
 }
 
 async function loadImage(url: string): Promise<Buffer | null> {
@@ -41,78 +75,114 @@ async function loadImage(url: string): Promise<Buffer | null> {
   }
 }
 
-function textSvg(width: number, height: number, lines: { text: string; size: number; color: string; weight?: number; maxLines?: number }[], opts?: { bg?: string; padX?: number; align?: 'center' | 'left' }): Buffer {
+// ── SVG Builder ──────────────────────────────────────────────────────────────
+
+function textSvg(
+  width: number,
+  height: number,
+  lines: { text: string; size: number; color: string; weight?: number }[],
+  opts?: { bg?: string; bgGradient?: [string, string]; align?: 'center' | 'left'; padX?: number; yBase?: number }
+): Buffer {
   const padX = opts?.padX ?? 48;
   const align = opts?.align ?? 'center';
   const firstSize = lines[0]?.size ?? 0;
   const totalHeight = lines.reduce((s, l) => s + l.size * 1.15, 0);
-  let y = (height - totalHeight) / 2 + firstSize;
+  const yBase = opts?.yBase ?? ((height - totalHeight) / 2 + firstSize);
+  let y = yBase;
+
+  let defs = '';
+  let bgElem = '';
+
+  if (opts?.bgGradient) {
+    defs = `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${opts.bgGradient[0]}"/><stop offset="100%" stop-color="${opts.bgGradient[1]}"/></linearGradient></defs>`;
+    bgElem = `<rect width="${width}" height="${height}" fill="url(#g)"/>`;
+  } else if (opts?.bg) {
+    bgElem = `<rect width="${width}" height="${height}" fill="${opts.bg}" rx="28"/>`;
+  }
+
   const tspans: string[] = [];
   for (const l of lines) {
     const anchor = align === 'center' ? 'middle' : 'start';
     const x = align === 'center' ? width / 2 : padX;
     tspans.push(
-      `<text x="${x}" y="${Math.round(y)}" text-anchor="${anchor}" font-family="sans-serif, Arial, Helvetica" font-weight="${l.weight ?? 700}" font-size="${l.size}" fill="${l.color}">${escapeXml(l.text)}</text>`
+      `<text x="${x}" y="${Math.round(y)}" text-anchor="${anchor}" font-family="${FONT_FAMILY}" font-weight="${l.weight ?? 700}" font-size="${l.size}" fill="${l.color}">${escapeXml(l.text)}</text>`
     );
     y += l.size * 1.2;
   }
-  const bg = opts?.bg ? `<rect width="${width}" height="${height}" fill="${opts.bg}" rx="28"/>` : '';
+
   return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="transparent"/>${bg}${tspans.join('')}</svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${FONT_FACE}${defs}<rect width="${width}" height="${height}" fill="transparent"/>${bgElem}${tspans.join('')}</svg>`
   );
 }
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
+// ── Zoomed Scene Renderer ────────────────────────────────────────────────────
 
-async function coverWithText(base: Buffer | null, baseColor: string, overlaySvg: Buffer, blur: boolean): Promise<Buffer> {
-  let pipeline = sharp({
-    create: { width: REEL_WIDTH, height: REEL_HEIGHT, channels: 4, background: baseColor },
-  });
+/**
+ * Renders a scene with gentle Ken Burns zoom/pan motion.
+ * `overlay` is a pre-rasterised PNG (constant across frames) so it is
+ * composited (cheap) rather than re-rendered from SVG each frame.
+ * stride=3 → every third output frame is rendered (held for 3 frames).
+ */
+async function renderZoomedScene(
+  base: Buffer | null,
+  baseColor: string,
+  overlay: Buffer | null,
+  startZoom: number,
+  endZoom: number,
+  panX: number,
+  panY: number,
+  outFrames: number
+): Promise<Buffer[]> {
+  const maxZoom = Math.max(startZoom, endZoom, 1.0);
+  let big: Buffer | null = null;
   if (base) {
-    const img = sharp(base).resize(REEL_WIDTH, REEL_HEIGHT, { fit: 'cover' });
-    if (blur) img.blur(18);
-    pipeline = sharp(await img.toBuffer());
+    const w = Math.round(REEL_WIDTH * maxZoom);
+    const h = Math.round(REEL_HEIGHT * maxZoom);
+    big = await sharp(base).resize(w, h, { fit: 'cover' }).jpeg({ quality: 75 }).toBuffer();
   }
-  if (overlaySvg && overlaySvg.length > 0) {
-    pipeline = pipeline.composite([{ input: overlaySvg, top: 0, left: 0 }]);
+
+  const stride = 3;
+  const frames: Buffer[] = [];
+  for (let i = 0; i < outFrames; i++) {
+    const t = outFrames <= 1 ? 0 : i / (outFrames - 1);
+    const zoom = startZoom + (endZoom - startZoom) * t;
+    const winW = Math.round(Math.min(REEL_WIDTH * maxZoom / zoom, REEL_WIDTH * maxZoom));
+    const winH = Math.round(Math.min(REEL_HEIGHT * maxZoom / zoom, REEL_HEIGHT * maxZoom));
+    const maxL = (REEL_WIDTH * maxZoom - winW);
+    const maxT = (REEL_HEIGHT * maxZoom - winH);
+    const left = Math.round(maxL * (0.5 + panX * (t - 0.5)));
+    const top = Math.round(maxT * (0.5 + panY * (t - 0.5)));
+
+    // Render a fresh frame only every `stride` frames; otherwise reuse it.
+    if (i % stride === 0) {
+      let pipeline: Sharp;
+      if (big) {
+        pipeline = sharp(big).extract({ left: Math.max(0, Math.min(left, maxL || 0)), top: Math.max(0, Math.min(top, maxT || 0)), width: winW, height: winH });
+        if (winW !== REEL_WIDTH || winH !== REEL_HEIGHT) pipeline = pipeline.resize(REEL_WIDTH, REEL_HEIGHT);
+      } else {
+        pipeline = sharp({ create: { width: REEL_WIDTH, height: REEL_HEIGHT, channels: 4, background: baseColor } });
+      }
+      if (overlay) pipeline = pipeline.composite([{ input: overlay, top: 0, left: 0 }]);
+      const out = await pipeline.jpeg({ quality: 75 }).toBuffer();
+      frames.push(out);
+    } else {
+      frames.push(frames[frames.length - 1]);
+    }
   }
-  return pipeline
-    .jpeg({ quality: 82, mozjpeg: true })
-    .toBuffer();
+  return frames;
 }
 
-async function productGrid(images: Buffer[]): Promise<Buffer> {
-  const upTo = Math.min(images.length, 4);
-  if (upTo === 0) {
-    return sharp({
-      create: { width: REEL_WIDTH, height: REEL_HEIGHT, channels: 4, background: '#fce7f3' },
-    })
-      .jpeg({ quality: 82 })
-      .toBuffer();
+/** Rasterises an SVG overlay once (transparent PNG) for reuse across frames. */
+async function rasterizeOverlay(svg: Buffer): Promise<Buffer | null> {
+  if (!svg || svg.length === 0) return null;
+  try {
+    return await sharp(svg).png().toBuffer();
+  } catch {
+    return null;
   }
-  if (upTo === 1) {
-    return sharp(images[0]).resize(REEL_WIDTH, REEL_HEIGHT, { fit: 'cover' }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
-  }
-  const cellW = REEL_WIDTH / 2;
-  const cellH = REEL_HEIGHT / 2;
-  const cells = await Promise.all(
-    images.slice(0, upTo).map((b) => sharp(b).resize(cellW, cellH, { fit: 'cover' }).jpeg({ quality: 80 }).toBuffer())
-  );
-  const pos: [number, number][] = [
-    [0, 0],
-    [cellW, 0],
-    [0, cellH],
-    [cellW, cellH],
-  ];
-  return sharp({
-    create: { width: REEL_WIDTH, height: REEL_HEIGHT, channels: 4, background: '#ffffff' },
-  })
-    .composite(cells.map((c, i) => ({ input: c, top: pos[i][1], left: pos[i][0] })))
-    .jpeg({ quality: 82, mozjpeg: true })
-    .toBuffer();
 }
+
+// ── Main Renderer ────────────────────────────────────────────────────────────
 
 export interface RenderedReel {
   mp4: Buffer;
@@ -126,52 +196,60 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
     if (buf) images.push(buf);
   }
 
+  const primary = images[0] ?? null;
   const isCollection = input.images.length > 1;
+  const sHook = stripEmoji(input.hook) || 'Check this out';
+  const sCta = stripEmoji(input.cta) || 'Shop Now';
+  const sDest = stripEmoji(input.destinationLabel) || 'janyacreations.com';
+  const sTitle = stripEmoji(input.title);
+  const sPrice = stripEmoji(input.priceText);
+  const sDiscount = input.discountText ? stripEmoji(input.discountText) : undefined;
+  const catCopy = categoryCopy(input.categoryName);
 
-  // ── Scene 1: hook ──
+  // ── Scene 1: PRODUCT HERO (0–1.7s, 17 frames, zoom 1.00→1.07) ──────────
   const hookSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
-    { text: input.hook.slice(0, 46), size: 68, color: '#ffffff' },
-  ], { bg: 'rgba(20,10,15,0.55)', padX: 56 });
-  const hookFrame = await coverWithText(images[0] ?? null, '#fce7f3', hookSvg, true);
+    { text: sHook.slice(0, 46), size: 56, color: '#ffffff', weight: 700 },
+  ], { bg: 'rgba(20,10,15,0.45)', yBase: 340 });
+  const hookOverlay = await rasterizeOverlay(hookSvg);
+  const scene1 = await renderZoomedScene(primary, '#fce7f3', hookOverlay, 1.00, 1.07, 0, -0.25, 17);
 
-  // ── Scene 2: product ──
-  let productFrame: Buffer;
-  if (isCollection && images.length > 1) {
-    productFrame = await productGrid(images);
-  } else {
-    productFrame = await coverWithText(images[0] ?? null, '#ffffff', Buffer.alloc(0), false);
-  }
-  const titleSvg = textSvg(REEL_WIDTH, 300, [
-    { text: input.title.slice(0, 64), size: 40, color: '#ffffff', maxLines: 2 },
-  ], { bg: 'rgba(0,0,0,0.45)', align: 'left' });
-  productFrame = await sharp(productFrame)
-    .composite([{ input: titleSvg, top: REEL_HEIGHT - 300, left: 0 }])
-    .jpeg({ quality: 82, mozjpeg: true })
-    .toBuffer();
+  // ── Scene 2: STYLE (1.7–3.6s, 19 frames, zoom 1.07→1.00) ───────────────
+  const styleSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
+    { text: catCopy, size: 42, color: '#ffffff', weight: 700 },
+  ], { bg: 'rgba(20,10,15,0.40)', yBase: 600 });
+  const styleOverlay = await rasterizeOverlay(styleSvg);
+  const scene2 = await renderZoomedScene(primary, '#ffffff', styleOverlay, 1.07, 1.00, 0, 0.15, 19);
 
-  // ── Scene 3: price ──
-  const priceLines = [{ text: input.priceText, size: 96, color: '#ffffff' }];
-  if (input.discountText) priceLines.push({ text: input.discountText, size: 44, color: '#fbbf24' });
-  const priceSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, priceLines, { bg: 'rgba(20,10,15,0.55)' });
-  const priceFrame = await coverWithText(images[0] ?? null, '#fce7f3', priceSvg, true);
+  // ── Scene 3: PRICE / VALUE (3.6–5.5s, 19 frames, zoom 1.00→1.05) ───────
+  const priceLines: { text: string; size: number; color: string; weight?: number }[] = [
+    { text: sTitle.slice(0, 60), size: 32, color: '#ffffff', weight: 700 },
+    { text: sPrice, size: 72, color: '#ffffff', weight: 700 },
+  ];
+  if (sDiscount) priceLines.push({ text: sDiscount, size: 40, color: '#fbbf24', weight: 700 });
+  const priceSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, priceLines, { bg: 'rgba(20,10,15,0.55)', yBase: 420 });
+  const priceOverlay = await rasterizeOverlay(priceSvg);
+  const scene3 = await renderZoomedScene(primary, '#fce7f3', priceOverlay, 1.00, 1.05, 0, 0.10, 19);
 
-  // ── Scene 4: cta ──
+  // ── Scene 4: BRAND + CTA (5.5–7.5s, 20 frames, static brand gradient) ──
   const ctaSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
-    { text: BRAND, size: 58, color: '#ffffff' },
-    { text: input.cta, size: 46, color: '#fce7f3' },
-    { text: input.destinationLabel, size: 30, color: '#fda4af' },
-  ], { bg: 'linear-gradient(180deg,#be123c 0%,#9f1239 100%)' });
-  const ctaFrame = await coverWithText(null, '#9f1239', ctaSvg, false);
+    { text: BRAND, size: 52, color: '#ffffff', weight: 700 },
+    { text: sCta, size: 40, color: '#fce7f3', weight: 700 },
+    { text: sDest, size: 26, color: '#fda4af', weight: 700 },
+  ], { bgGradient: ['#be123c', '#9f1239'], yBase: 560 });
+  const ctaOverlay = await rasterizeOverlay(ctaSvg);
+  const ctaBase = await sharp({
+    create: { width: REEL_WIDTH, height: REEL_HEIGHT, channels: 4, background: '#9f1239' },
+  }).jpeg().toBuffer();
+  const ctaMerged = ctaOverlay
+    ? await sharp(ctaBase).composite([{ input: ctaOverlay, top: 0, left: 0 }]).jpeg({ quality: 75 }).toBuffer()
+    : ctaBase;
+  const scene4: Buffer[] = [];
+  for (let i = 0; i < 20; i++) scene4.push(ctaMerged);
 
-  const scenes = [hookFrame, productFrame, priceFrame, ctaFrame];
-  const frames: Buffer[] = [];
-  for (const scene of scenes) {
-    for (let i = 0; i < FRAMES_PER_SCENE; i++) frames.push(scene);
-  }
-
-  // Genuine H.264 encode (browser + Instagram compatible) via ffmpeg-static.
-  const mp4 = encodeH264(frames, REEL_FPS, REEL_WIDTH, REEL_HEIGHT);
-  const thumbnail = scenes[1]; // product scene as poster
+  // ── Assemble frames ──────────────────────────────────────────────────────
+  const allFrames = [...scene1, ...scene2, ...scene3, ...scene4];
+  const mp4 = encodeH264(allFrames, REEL_FPS, REEL_WIDTH, REEL_HEIGHT, { preset: 'ultrafast', crf: 26 });
+  const thumbnail = scene2[Math.floor(scene2.length / 2)]; // mid-style frame
 
   return { mp4, thumbnail };
 }

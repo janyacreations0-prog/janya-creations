@@ -278,6 +278,7 @@ export async function createReelJob(
       cta: captionData.cta,
       destinationLabel: captionData.cta,
       images: product.imageUrls,
+      categoryName: product.categoryName,
     });
 
     // Upload to storage.

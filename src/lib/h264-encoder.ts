@@ -36,11 +36,15 @@ export function encodeH264(
   frames: Buffer[],
   fps: number,
   width: number,
-  height: number
+  height: number,
+  opts?: { preset?: string; crf?: number }
 ): Buffer {
   if (!frames || frames.length === 0) {
     throw new Error('No frames to encode');
   }
+
+  const preset = opts?.preset ?? 'veryfast';
+  const crf = String(opts?.crf ?? 23);
 
   const start = Date.now();
 
@@ -66,8 +70,8 @@ export function encodeH264(
     '-framerate', String(fps),
     '-i', '-',
     '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '23',
+    '-preset', preset,
+    '-crf', crf,
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     '-f', 'mp4',
