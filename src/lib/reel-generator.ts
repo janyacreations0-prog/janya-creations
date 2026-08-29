@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { muxMpeg4Mp4 } from '@/lib/mjpeg-mp4';
+import { encodeH264 } from '@/lib/h264-encoder';
 
 /**
  * Reel frame generator.
@@ -169,7 +169,8 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
     for (let i = 0; i < FRAMES_PER_SCENE; i++) frames.push(scene);
   }
 
-  const mp4 = muxMpeg4Mp4({ width: REEL_WIDTH, height: REEL_HEIGHT, fps: REEL_FPS, frames });
+  // Genuine H.264 encode (browser + Instagram compatible) via ffmpeg-static.
+  const mp4 = encodeH264(frames, REEL_FPS, REEL_WIDTH, REEL_HEIGHT);
   const thumbnail = scenes[1]; // product scene as poster
 
   return { mp4, thumbnail };
