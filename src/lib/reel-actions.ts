@@ -177,6 +177,10 @@ export async function createReelJob(
     const product = await fetchProductData(productId);
     if (!product) return { success: false, error: 'Product not found.' };
 
+    // Safe diagnostic — reports PRESENCE ONLY (never the value/characters).
+    console.log('[reel] createReelJob SUPABASE_SERVICE_ROLE_KEY_PRESENT=' +
+      Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY));
+
     // Check for existing job.
     const admin = createAdminClient();
     const { data: existing } = await admin
