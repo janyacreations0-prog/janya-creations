@@ -70,18 +70,23 @@ export default function ReelFactoryPage() {
 
   const load = async () => {
     setLoading(true);
-    try {
-      const [prodList, jobList] = await Promise.all([
-        listProductsForReels(),
-        listReelJobs(),
-      ]);
-      setProducts(prodList);
-      setJobs(jobList);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load Reel Factory.');
-    } finally {
-      setLoading(false);
+    setError('');
+    // Fetch products and jobs independently — a failure in one must never
+    // block the other (the product dropdown was previously broken by a
+    // coupled Promise.all + an uncaught throw in listReelJobs).
+    const [prodResult, jobResult] = await Promise.allSettled([
+      listProductsForReels(),
+      listReelJobs(),
+    ]);
+    if (prodResult.status === 'fulfilled') {
+      setProducts(prodResult.value);
+    } else {
+      setError('Unable to load products. Please try again.');
     }
+    if (jobResult.status === 'fulfilled') {
+      setJobs(jobResult.value);
+    }
+    setLoading(false);
   };
 
   useEffect(() => {

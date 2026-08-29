@@ -114,11 +114,16 @@ async function rowToJob(row: any): Promise<ReelJob> {
 
 // ── Server Actions ────────────────────────────────────────────────────────────
 
-/** Lightweight product list for the Reel Factory selector. */
+/** Lightweight product list for the Reel Factory selector. Never throws. */
 export async function listProductsForReels(): Promise<{ id: string; title: string }[]> {
-  const supabase = await createClient();
-  const { data } = await supabase.from('products').select('id, title, name').order('created_at', { ascending: false }).limit(200);
-  return (data ?? []).map((p: any) => ({ id: String(p.id), title: p.title || p.name || 'Untitled' }));
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase.from('products').select('id, title, name').order('created_at', { ascending: false }).limit(200);
+    return (data ?? []).map((p: any) => ({ id: String(p.id), title: p.title || p.name || 'Untitled' }));
+  } catch (e: any) {
+    console.error('[reel] listProductsForReels error:', e);
+    return [];
+  }
 }
 
 export async function listReelJobs(
@@ -128,17 +133,32 @@ export async function listReelJobs(
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !(await isAdminUser(user))) return [];
-  } catch {
+
+    // The admin client requires SUPABASE_SERVICE_ROLE_KEY. If it is unset or
+    // invalid, degrade gracefully (return empty list + log) instead of throwing
+    // and breaking the whole Reel Factory page load.
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch (e: any) {
+      console.error('[reel] listReelJobs admin client unavailable:', e?.message || e);
+      return [];
+    }
+
+    let query = admin.from('social_reel_jobs').select('*').order('created_at', { ascending: false });
+    if (filters?.status) query = query.eq('status', filters.status);
+    if (filters?.template) query = query.eq('template', filters.template);
+    const { data, error } = await query;
+    if (error) {
+      console.error('[reel] listReelJobs query error:', error.message);
+      return [];
+    }
+    if (!data) return [];
+    return Promise.all(data.map(rowToJob));
+  } catch (e: any) {
+    console.error('[reel] listReelJobs error:', e);
     return [];
   }
-
-  const admin = createAdminClient();
-  let query = admin.from('social_reel_jobs').select('*').order('created_at', { ascending: false });
-  if (filters?.status) query = query.eq('status', filters.status);
-  if (filters?.template) query = query.eq('template', filters.template);
-  const { data } = await query;
-  if (!data) return [];
-  return Promise.all(data.map(rowToJob));
 }
 
 export async function createReelJob(
