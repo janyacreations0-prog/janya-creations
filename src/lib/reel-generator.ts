@@ -1,6 +1,6 @@
-import sharp, { type Sharp } from 'sharp';
 import * as fs from 'fs';
 import * as path from 'path';
+import sharp, { type Sharp } from 'sharp';
 import * as opentype from 'opentype.js';
 import { encodeH264 } from '@/lib/h264-encoder';
 
@@ -83,6 +83,39 @@ async function loadImage(url: string): Promise<Buffer | null> {
 
 // ── SVG Builder ──────────────────────────────────────────────────────────────
 
+interface PathCommand {
+  type: string;
+  x?: number;
+  y?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+}
+
+/**
+ * Serializes an opentype.js Path to an SVG path string using safe numeric
+ * rounding. opentype's toPathData() calls roundDecimal() which string-
+ * concatenates the fractional part (decimalPart + "e+" + places); for tiny
+ * floating-point residues rendered in exponential notation (e.g. 1.77e-15)
+ * that produces an invalid number and emits "NaN" into the SVG path data,
+ * which librsvg then drops. Rounding with Math.round(n * factor) / factor
+ * avoids that entirely while keeping the same 1-decimal precision.
+ */
+function safePathData(p: { commands: unknown[] }, decimals = 1): string {
+  const factor = Math.pow(10, decimals);
+  const r = (n: number) => String(Math.round(n * factor) / factor);
+  let d = '';
+  for (const c of p.commands as PathCommand[]) {
+    if (c.type === 'M') d += `M${r(c.x!)} ${r(c.y!)}`;
+    else if (c.type === 'L') d += `L${r(c.x!)} ${r(c.y!)}`;
+    else if (c.type === 'Q') d += `Q${r(c.x1!)} ${r(c.y1!)} ${r(c.x!)} ${r(c.y!)}`;
+    else if (c.type === 'C') d += `C${r(c.x1!)} ${r(c.y1!)} ${r(c.x2!)} ${r(c.y2!)} ${r(c.x!)} ${r(c.y!)}`;
+    else if (c.type === 'Z') d += 'Z';
+  }
+  return d;
+}
+
 /** Converts a line of text to an SVG <path> outline (font-independent). */
 function textPath(
   text: string,
@@ -98,8 +131,10 @@ function textPath(
     const p = FONT.getPath(text, 0, 0, size);
     const bb = p.getBoundingBox();
     const cx = align === 'center' ? width / 2 - (bb.x1 + bb.x2) / 2 : padX - bb.x1;
-    // Use a <g> transform to flip Y (font y-up → SVG y-down) and position.
-    return `<g transform="translate(${cx.toFixed(1)}, ${baselineY}) scale(1, -1)"><path d="${p.toPathData(1)}" fill="${color}"/></g>`;
+    // opentype.js Glyph.getPath() already converts the font's y-up coordinates
+    // to SVG y-down (it computes y + -cmd.y * yScale), so no Y-flip is needed
+    // here — only horizontal centering and baseline placement.
+    return `<g transform="translate(${cx.toFixed(1)}, ${baselineY})"><path d="${safePathData(p, 1)}" fill="${color}"/></g>`;
   } catch {
     return '';
   }
