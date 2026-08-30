@@ -1,6 +1,7 @@
 import sharp, { type Sharp } from 'sharp';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as opentype from 'opentype.js';
 import { encodeH264 } from '@/lib/h264-encoder';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -10,21 +11,26 @@ export const REEL_HEIGHT = 1280;
 const REEL_FPS = 10;
 const BRAND = 'Janya Creations';
 
-// On Vercel Lambda, /var/task/node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf
-// is present because next is a dependency. Embed it as a data URI so librsvg
-// can always find it — no reliance on stray system fonts.
-const FONT_BASE64 = (() => {
+// Load the bundled Noto Sans font once and render ALL overlay text as SVG
+// <path> outlines (via opentype.js). librsvg then has ZERO font dependency —
+// it simply draws the vector outlines, so glyphs always render regardless of
+// the runtime environment. The font file ships in public/fonts.
+const FONT = (() => {
   try {
-    const fp = path.join(process.cwd(), 'node_modules', 'next', 'dist', 'compiled', '@vercel', 'og', 'noto-sans-v27-latin-regular.ttf');
-    return fs.readFileSync(fp).toString('base64');
+    const candidates = [
+      path.join(process.cwd(), 'public', 'fonts', 'noto-sans-regular.ttf'),
+      path.join(process.cwd(), 'node_modules', 'next', 'dist', 'compiled', '@vercel', 'og', 'noto-sans-v27-latin-regular.ttf'),
+    ];
+    for (const fp of candidates) {
+      try {
+        return opentype.parse(fs.readFileSync(fp));
+      } catch { /* try next */ }
+    }
+    return null;
   } catch {
-    return '';
+    return null;
   }
 })();
-const FONT_FACE = FONT_BASE64
-  ? `<style>@font-face{font-family:'N';src:url(data:font/ttf;base64,${FONT_BASE64})}</style>`
-  : '';
-const FONT_FAMILY = `${FONT_BASE64 ? 'N,' : ''}sans-serif`;
 
 // ── Input Interface ──────────────────────────────────────────────────────────
 
@@ -77,10 +83,32 @@ async function loadImage(url: string): Promise<Buffer | null> {
 
 // ── SVG Builder ──────────────────────────────────────────────────────────────
 
+/** Converts a line of text to an SVG <path> outline (font-independent). */
+function textPath(
+  text: string,
+  size: number,
+  color: string,
+  align: 'center' | 'left',
+  width: number,
+  padX: number,
+  baselineY: number
+): string {
+  if (!FONT || !text) return '';
+  try {
+    const p = FONT.getPath(text, 0, 0, size);
+    const bb = p.getBoundingBox();
+    const cx = align === 'center' ? width / 2 - (bb.x1 + bb.x2) / 2 : padX - bb.x1;
+    // Use a <g> transform to flip Y (font y-up → SVG y-down) and position.
+    return `<g transform="translate(${cx.toFixed(1)}, ${baselineY}) scale(1, -1)"><path d="${p.toPathData(1)}" fill="${color}"/></g>`;
+  } catch {
+    return '';
+  }
+}
+
 function textSvg(
   width: number,
   height: number,
-  lines: { text: string; size: number; color: string; weight?: number }[],
+  lines: { text: string; size: number; color: string }[],
   opts?: { bg?: string; bgGradient?: [string, string]; align?: 'center' | 'left'; padX?: number; yBase?: number }
 ): Buffer {
   const padX = opts?.padX ?? 48;
@@ -100,18 +128,14 @@ function textSvg(
     bgElem = `<rect width="${width}" height="${height}" fill="${opts.bg}" rx="28"/>`;
   }
 
-  const tspans: string[] = [];
+  const paths: string[] = [];
   for (const l of lines) {
-    const anchor = align === 'center' ? 'middle' : 'start';
-    const x = align === 'center' ? width / 2 : padX;
-    tspans.push(
-      `<text x="${x}" y="${Math.round(y)}" text-anchor="${anchor}" font-family="${FONT_FAMILY}" font-weight="${l.weight ?? 700}" font-size="${l.size}" fill="${l.color}">${escapeXml(l.text)}</text>`
-    );
+    paths.push(textPath(l.text, l.size, l.color, align, width, padX, y));
     y += l.size * 1.2;
   }
 
   return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${FONT_FACE}${defs}<rect width="${width}" height="${height}" fill="transparent"/>${bgElem}${tspans.join('')}</svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${defs}<rect width="${width}" height="${height}" fill="transparent"/>${bgElem}${paths.join('')}</svg>`
   );
 }
 
@@ -208,33 +232,33 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
 
   // ── Scene 1: PRODUCT HERO (0–1.7s, 17 frames, zoom 1.00→1.07) ──────────
   const hookSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
-    { text: sHook.slice(0, 46), size: 56, color: '#ffffff', weight: 700 },
+    { text: sHook.slice(0, 46), size: 56, color: '#ffffff' },
   ], { bg: 'rgba(20,10,15,0.45)', yBase: 340 });
   const hookOverlay = await rasterizeOverlay(hookSvg);
   const scene1 = await renderZoomedScene(primary, '#fce7f3', hookOverlay, 1.00, 1.07, 0, -0.25, 17);
 
   // ── Scene 2: STYLE (1.7–3.6s, 19 frames, zoom 1.07→1.00) ───────────────
   const styleSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
-    { text: catCopy, size: 42, color: '#ffffff', weight: 700 },
+    { text: catCopy, size: 42, color: '#ffffff' },
   ], { bg: 'rgba(20,10,15,0.40)', yBase: 600 });
   const styleOverlay = await rasterizeOverlay(styleSvg);
   const scene2 = await renderZoomedScene(primary, '#ffffff', styleOverlay, 1.07, 1.00, 0, 0.15, 19);
 
   // ── Scene 3: PRICE / VALUE (3.6–5.5s, 19 frames, zoom 1.00→1.05) ───────
   const priceLines: { text: string; size: number; color: string; weight?: number }[] = [
-    { text: sTitle.slice(0, 60), size: 32, color: '#ffffff', weight: 700 },
-    { text: sPrice, size: 72, color: '#ffffff', weight: 700 },
+    { text: sTitle.slice(0, 60), size: 32, color: '#ffffff' },
+    { text: sPrice, size: 72, color: '#ffffff' },
   ];
-  if (sDiscount) priceLines.push({ text: sDiscount, size: 40, color: '#fbbf24', weight: 700 });
+  if (sDiscount) priceLines.push({ text: sDiscount, size: 40, color: '#fbbf24' });
   const priceSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, priceLines, { bg: 'rgba(20,10,15,0.55)', yBase: 420 });
   const priceOverlay = await rasterizeOverlay(priceSvg);
   const scene3 = await renderZoomedScene(primary, '#fce7f3', priceOverlay, 1.00, 1.05, 0, 0.10, 19);
 
   // ── Scene 4: BRAND + CTA (5.5–7.5s, 20 frames, static brand gradient) ──
   const ctaSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
-    { text: BRAND, size: 52, color: '#ffffff', weight: 700 },
-    { text: sCta, size: 40, color: '#fce7f3', weight: 700 },
-    { text: sDest, size: 26, color: '#fda4af', weight: 700 },
+    { text: BRAND, size: 52, color: '#ffffff' },
+    { text: sCta, size: 40, color: '#fce7f3' },
+    { text: sDest, size: 26, color: '#fda4af' },
   ], { bgGradient: ['#be123c', '#9f1239'], yBase: 560 });
   const ctaOverlay = await rasterizeOverlay(ctaSvg);
   const ctaBase = await sharp({
