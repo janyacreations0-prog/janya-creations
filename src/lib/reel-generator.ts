@@ -2,6 +2,7 @@ import sharp, { type Sharp } from 'sharp';
 import * as opentype from 'opentype.js';
 import { encodeH264 } from '@/lib/h264-encoder';
 import { NOTO_SANS_BASE64 } from '@/lib/noto-sans-b64';
+import { SITE_URL } from '@/lib/seo';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -185,6 +186,152 @@ function textSvg(
   return svg;
 }
 
+// ── Text Fitting Helpers (V3) ────────────────────────────────────────────────
+
+/**
+ * Measures the rendered ink width of a string in pixels at a given font size,
+ * using the already-loaded opentype font's real glyph outlines (not an estimate).
+ */
+function measureTextWidth(text: string, size: number): number {
+  if (!FONT || !text) return 0;
+  try {
+    const bb = FONT.getPath(text, 0, 0, size).getBoundingBox();
+    return Math.max(0, bb.x2 - bb.x1);
+  } catch {
+    return 0;
+  }
+}
+
+/** Greedy word-wrap: returns lines, each fitting within maxWidth. */
+function wrapTextToWidth(text: string, size: number, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const lines: string[] = [];
+  let current = '';
+  for (const w of words) {
+    const candidate = current ? `${current} ${w}` : w;
+    if (measureTextWidth(candidate, size) <= maxWidth) {
+      current = candidate;
+    } else {
+      if (current) lines.push(current);
+      current = w;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/** Truncates text to fit maxWidth, appending a trailing "…" when needed. */
+function truncateToFit(text: string, size: number, maxWidth: number): string {
+  const ellipsis = '…';
+  if (measureTextWidth(text, size) <= maxWidth) return text;
+  let lo = 0;
+  let hi = text.length;
+  let best = ellipsis;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const candidate = text.slice(0, mid) + ellipsis;
+    if (measureTextWidth(candidate, size) <= maxWidth) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/**
+ * Fits a product title into at most two centered lines:
+ * 1. one line when it fits,
+ * 2. two balanced lines when it does not,
+ * 3. ellipsis truncation only when two lines still cannot fit.
+ * A single over-long unbroken word is truncated rather than shrunk.
+ */
+function fitTitleLines(text: string, size: number, maxWidth: number): string[] {
+  const t = (text || '').trim();
+  if (!t) return [];
+  if (measureTextWidth(t, size) <= maxWidth) return [t];
+
+  const words = t.split(/\s+/).filter(Boolean);
+  // Two balanced lines: prefer the split with the closest line widths.
+  let best: [string, string] | null = null;
+  let bestImbalance = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const l1 = words.slice(0, i).join(' ');
+    const l2 = words.slice(i).join(' ');
+    const w1 = measureTextWidth(l1, size);
+    const w2 = measureTextWidth(l2, size);
+    if (w1 <= maxWidth && w2 <= maxWidth) {
+      const imb = Math.abs(w1 - w2);
+      if (imb < bestImbalance) {
+        bestImbalance = imb;
+        best = [l1, l2];
+      }
+    }
+  }
+  if (best) return best;
+
+  // Fallback: first line fits by width; truncate the remainder with "…".
+  const wrapped = wrapTextToWidth(t, size, maxWidth);
+  const firstRaw = wrapped[0] || t;
+  const first = measureTextWidth(firstRaw, size) <= maxWidth ? firstRaw : truncateToFit(firstRaw, size, maxWidth);
+  const rest = t.slice(firstRaw.length).trim();
+  const second = rest ? truncateToFit(rest, size, maxWidth) : '';
+  return second ? [first, second] : [first];
+}
+
+/** Extracts the clean, human-readable brand domain from the configured site URL. */
+function cleanSiteDomain(): string {
+  try {
+    return new URL(SITE_URL).hostname.replace(/^www\./, '');
+  } catch {
+    return 'janyacreations.com';
+  }
+}
+
+/** Builds the Scene 3 (price/value) overlay SVG with a fitted, wrapped title. */
+function buildPriceSceneSvg(
+  width: number,
+  height: number,
+  title: string,
+  price: string,
+  discount: string | undefined
+): Buffer {
+  const titleSize = 32;
+  const priceSize = 72;
+  const discountSize = 40;
+  const maxTitleWidth = 600; // safe ink width inside 720 with 48px pads
+  const titleLineGap = 38;
+  const titleToPriceGap = 68;
+  const priceToDiscountGap = 92;
+
+  const titleLines = fitTitleLines(title, titleSize, maxTitleWidth);
+  const n = titleLines.length;
+  // Keep the block vertically centered as the title grows.
+  const startY = 430 - (n - 1) * 20;
+
+  const paths: string[] = [];
+  let y = startY;
+  for (const line of titleLines) {
+    paths.push(textPath(line, titleSize, '#ffffff', 'center', width, 48, y));
+    y += titleLineGap;
+  }
+  const priceY = startY + (n - 1) * titleLineGap + titleToPriceGap;
+  paths.push(textPath(price, priceSize, '#ffffff', 'center', width, 48, priceY));
+  if (discount) {
+    paths.push(textPath(discount, discountSize, '#fbbf24', 'center', width, 48, priceY + priceToDiscountGap));
+  }
+
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="transparent"/><rect width="${width}" height="${height}" fill="rgba(20,10,15,0.55)" rx="28"/>${paths.join('')}</svg>`
+  );
+  const expectedLines = n + 1 + (discount ? 1 : 0);
+  const pathCount = (svg.toString().match(/<path /g) || []).length;
+  console.error(`[reel-dbg] STAGE-B svg bytes=${svg.length} expectedLines=${expectedLines} emittedPaths=${pathCount} emptyPaths=${expectedLines - pathCount}`);
+  return svg;
+}
+
 // ── Zoomed Scene Renderer ────────────────────────────────────────────────────
 
 /**
@@ -290,7 +437,7 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
   const isCollection = input.images.length > 1;
   const sHook = stripEmoji(input.hook) || 'Check this out';
   const sCta = stripEmoji(input.cta) || 'Shop Now';
-  const sDest = stripEmoji(input.destinationLabel) || 'janyacreations.com';
+  const sDest = cleanSiteDomain(); // canonical brand domain — never the CTA label
   const sTitle = stripEmoji(input.title);
   const sPrice = stripEmoji(input.priceText);
   const sDiscount = input.discountText ? stripEmoji(input.discountText) : undefined;
@@ -311,12 +458,8 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
   const scene2 = await renderZoomedScene(primary, '#ffffff', styleOverlay, 1.07, 1.00, 0, 0.15, 19);
 
   // ── Scene 3: PRICE / VALUE (3.6–5.5s, 19 frames, zoom 1.00→1.05) ───────
-  const priceLines: { text: string; size: number; color: string; weight?: number }[] = [
-    { text: sTitle.slice(0, 60), size: 32, color: '#ffffff' },
-    { text: sPrice, size: 72, color: '#ffffff' },
-  ];
-  if (sDiscount) priceLines.push({ text: sDiscount, size: 40, color: '#fbbf24' });
-  const priceSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, priceLines, { bg: 'rgba(20,10,15,0.55)', yBase: 420 });
+  // Title is fitted/wrapped via buildPriceSceneSvg (1 line → 2 balanced lines → "…").
+  const priceSvg = buildPriceSceneSvg(REEL_WIDTH, REEL_HEIGHT, sTitle, sPrice, sDiscount);
   const priceOverlay = await rasterizeOverlay(priceSvg);
   const scene3 = await renderZoomedScene(primary, '#fce7f3', priceOverlay, 1.00, 1.05, 0, 0.10, 19);
 
