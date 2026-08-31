@@ -444,9 +444,10 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
   const catCopy = categoryCopy(input.categoryName);
 
   // ── Scene 1: PRODUCT HERO (0–1.7s, 17 frames, zoom 1.00→1.07) ──────────
-  const hookSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, [
-    { text: sHook.slice(0, 46), size: 56, color: '#ffffff' },
-  ], { bg: 'rgba(20,10,15,0.45)', yBase: 340 });
+  // Hook is fitted/wrapped via fitTitleLines (1 line → 2 balanced lines → "…")
+  // so it can NEVER exceed the safe 600px ink width inside the 720px canvas.
+  const hookLines = fitTitleLines(sHook, 56, 600);
+  const hookSvg = textSvg(REEL_WIDTH, REEL_HEIGHT, hookLines.map((text) => ({ text, size: 56, color: '#ffffff' })), { bg: 'rgba(20,10,15,0.45)', yBase: 340 });
   const hookOverlay = await rasterizeOverlay(hookSvg);
   const scene1 = await renderZoomedScene(primary, '#fce7f3', hookOverlay, 1.00, 1.07, 0, -0.25, 17);
 
