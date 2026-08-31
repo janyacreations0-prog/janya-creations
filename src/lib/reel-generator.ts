@@ -1,8 +1,7 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import sharp, { type Sharp } from 'sharp';
 import * as opentype from 'opentype.js';
 import { encodeH264 } from '@/lib/h264-encoder';
+import { NOTO_SANS_BASE64 } from '@/lib/noto-sans-b64';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -11,23 +10,23 @@ export const REEL_HEIGHT = 1280;
 const REEL_FPS = 10;
 const BRAND = 'Janya Creations';
 
-// Load the bundled Noto Sans font once and render ALL overlay text as SVG
-// <path> outlines (via opentype.js). librsvg then has ZERO font dependency —
-// it simply draws the vector outlines, so glyphs always render regardless of
-// the runtime environment. The font file ships in public/fonts.
+// The Noto Sans font is embedded as a base64 constant so it is ALWAYS available
+// regardless of the runtime filesystem (Vercel Lambda bundle, local dev, any
+// container). Text is rendered as SVG <path> outlines via opentype.js — librsvg
+// draws pure vector geometry with zero font lookup, so glyphs render identically
+// everywhere. There is NO dependency on process.cwd()/public/fonts, __dirname
+// discovery, or Next.js output file tracing.
 const FONT = (() => {
   try {
-    const candidates = [
-      path.join(process.cwd(), 'public', 'fonts', 'noto-sans-regular.ttf'),
-      path.join(process.cwd(), 'node_modules', 'next', 'dist', 'compiled', '@vercel', 'og', 'noto-sans-v27-latin-regular.ttf'),
-    ];
-    for (const fp of candidates) {
-      try {
-        return opentype.parse(fs.readFileSync(fp));
-      } catch { /* try next */ }
-    }
-    return null;
+    const buf = Buffer.from(NOTO_SANS_BASE64, 'base64');
+    const font = opentype.parse(buf);
+    // TEMP DIAGNOSTIC (metadata only — no font contents/base64 data):
+    const f = font as unknown as { unitsPerEm?: number; glyphs?: { length?: number } };
+    console.error(`[reel-dbg] STAGE-A font load OK embeddedBase64 bytes=${buf.length} unitsPerEm=${f.unitsPerEm} numGlyphs=${f.glyphs ? f.glyphs.length : 'n/a'}`);
+    return font;
   } catch {
+    // TEMP DIAGNOSTIC — font failed to build from embedded base64:
+    console.error(`[reel-dbg] STAGE-A font load FAILED (FONT=null) embeddedBase64`);
     return null;
   }
 })();
@@ -126,7 +125,11 @@ function textPath(
   padX: number,
   baselineY: number
 ): string {
-  if (!FONT || !text) return '';
+  // TEMP DIAGNOSTIC — is the font present and is text non-empty?
+  if (!FONT || !text) {
+    console.error(`[reel-dbg] STAGE-A textPath EMPTY fontLoaded=${!!FONT} textLen=${(text || '').length}`);
+    return '';
+  }
   try {
     const p = FONT.getPath(text, 0, 0, size);
     const bb = p.getBoundingBox();
@@ -134,8 +137,12 @@ function textPath(
     // opentype.js Glyph.getPath() already converts the font's y-up coordinates
     // to SVG y-down (it computes y + -cmd.y * yScale), so no Y-flip is needed
     // here — only horizontal centering and baseline placement.
-    return `<g transform="translate(${cx.toFixed(1)}, ${baselineY})"><path d="${safePathData(p, 1)}" fill="${color}"/></g>`;
-  } catch {
+    const d = safePathData(p, 1);
+    // TEMP DIAGNOSTIC — command count + path data length + NaN presence:
+    console.error(`[reel-dbg] STAGE-A textPath OK size=${size} cmds=${p.commands.length} pathLen=${d.length} hasNaN=${d.includes('NaN')} bbox=${bb.x1.toFixed(1)},${bb.y1.toFixed(1)},${bb.x2.toFixed(1)},${bb.y2.toFixed(1)}`);
+    return `<g transform="translate(${cx.toFixed(1)}, ${baselineY})"><path d="${d}" fill="${color}"/></g>`;
+  } catch (e: any) {
+    console.error(`[reel-dbg] STAGE-A textPath THREW msg=${e?.message || e}`);
     return '';
   }
 }
@@ -169,9 +176,13 @@ function textSvg(
     y += l.size * 1.2;
   }
 
-  return Buffer.from(
+  const svg = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${defs}<rect width="${width}" height="${height}" fill="transparent"/>${bgElem}${paths.join('')}</svg>`
   );
+  // TEMP DIAGNOSTIC — SVG length + how many text <path> elements were emitted:
+  const pathCount = (svg.toString().match(/<path /g) || []).length;
+  console.error(`[reel-dbg] STAGE-B svg bytes=${svg.length} expectedLines=${lines.length} emittedPaths=${pathCount} emptyPaths=${lines.length - pathCount}`);
+  return svg;
 }
 
 // ── Zoomed Scene Renderer ────────────────────────────────────────────────────
@@ -223,6 +234,8 @@ async function renderZoomedScene(
       }
       if (overlay) pipeline = pipeline.composite([{ input: overlay, top: 0, left: 0 }]);
       const out = await pipeline.jpeg({ quality: 75 }).toBuffer();
+      // TEMP DIAGNOSTIC — composite JPEG metadata (stage D):
+      console.error(`[reel-dbg] STAGE-D composite jpeg bytes=${out.length} frame=${i}/${outFrames}`);
       frames.push(out);
     } else {
       frames.push(frames[frames.length - 1]);
@@ -233,10 +246,28 @@ async function renderZoomedScene(
 
 /** Rasterises an SVG overlay once (transparent PNG) for reuse across frames. */
 async function rasterizeOverlay(svg: Buffer): Promise<Buffer | null> {
-  if (!svg || svg.length === 0) return null;
+  if (!svg || svg.length === 0) {
+    console.error(`[reel-dbg] STAGE-C rasterizeOverlay EMPTY svg (svg len 0)`);
+    return null;
+  }
   try {
-    return await sharp(svg).png().toBuffer();
-  } catch {
+    const png = await sharp(svg).png().toBuffer();
+    // TEMP DIAGNOSTIC — PNG dimensions + non-transparent (opaque/partially opaque) pixel count:
+    let opaque = -1;
+    let dims = 'n/a';
+    try {
+      const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+      let n = 0;
+      for (let i = 0; i < data.length; i += info.channels) {
+        if (data[i + 3] > 0) n++;
+      }
+      opaque = n;
+      dims = `${info.width}x${info.height}`;
+    } catch { /* ignore */ }
+    console.error(`[reel-dbg] STAGE-C overlay png bytes=${png.length} dims=${dims} nonTransparentPx=${opaque}`);
+    return png;
+  } catch (e: any) {
+    console.error(`[reel-dbg] STAGE-C rasterizeOverlay THREW msg=${e?.message || e}`);
     return null;
   }
 }
@@ -307,6 +338,8 @@ export async function renderReel(input: ReelRenderInput): Promise<RenderedReel> 
 
   // ── Assemble frames ──────────────────────────────────────────────────────
   const allFrames = [...scene1, ...scene2, ...scene3, ...scene4];
+  // TEMP DIAGNOSTIC — per-scene overlay presence + frame counts:
+  console.error(`[reel-dbg] STAGE-D/E scene overlays: hook=${!!hookOverlay} style=${!!styleOverlay} price=${!!priceOverlay} cta=${!!ctaOverlay} frames: s1=${scene1.length} s2=${scene2.length} s3=${scene3.length} s4=${scene4.length} total=${allFrames.length}`);
   const mp4 = encodeH264(allFrames, REEL_FPS, REEL_WIDTH, REEL_HEIGHT, { preset: 'ultrafast', crf: 26 });
   const thumbnail = scene2[Math.floor(scene2.length / 2)]; // mid-style frame
 

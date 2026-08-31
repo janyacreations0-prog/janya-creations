@@ -64,6 +64,9 @@ export function encodeH264(
   const input = Buffer.concat(frames);
   const outFile = path.join(os.tmpdir(), `reel_${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`);
 
+  // TEMP DIAGNOSTIC — stage E (FFmpeg input): total input bytes + frame count
+  console.error(`[reel-dbg] STAGE-E ffmpeg input frames=${frames.length} inputBytes=${input.length} fps=${fps} ${width}x${height}`);
+
   const args = [
     '-y',
     '-f', 'image2pipe',
@@ -116,6 +119,8 @@ export function encodeH264(
   console.error(
     `[reel] H264 encode ok: ${mp4.length} bytes, ${frames.length} frames, ${width}x${height}, ${Date.now() - start}ms`
   );
+  // TEMP DIAGNOSTIC — stage F (final MP4): avc1 codec marker + no jpeg track
+  console.error(`[reel-dbg] STAGE-F mp4 bytes=${mp4.length} hasAvc1=${mp4.includes('avc1')} hasJpegTrack=${mp4.includes('jpeg')} ${width}x${height}`);
 
   return mp4;
 }
