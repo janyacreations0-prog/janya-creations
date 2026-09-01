@@ -119,13 +119,32 @@ export default function CheckoutPage() {
     }
 
     const order = result.order;
-    if (!order.redirectUrl) {
+    if (order.gateway === 'cashfree' && order.paymentSessionId) {
+      // Cashfree hosted checkout — load the SDK dynamically.
+      try {
+        const script = document.createElement('script');
+        script.src = 'https://sdk.cashfree.com/js/v3/cashfree.js';
+        script.async = true;
+        script.onload = () => {
+          const cashfree = (window as any).Cashfree({
+            mode: order.cashfreeMode || 'sandbox',
+          });
+          cashfree.checkout({
+            paymentSessionId: order.paymentSessionId,
+            redirectTarget: '_self',
+          });
+        };
+        document.body.appendChild(script);
+      } catch (e) {
+        setError('Payment gateway could not be loaded. Please try again.');
+      }
+    } else if (order.redirectUrl) {
+      // PhonePe redirect (fallback).
+      window.location.href = order.redirectUrl;
+    } else {
       setError('Payment gateway is not ready. Please try again shortly.');
       return;
     }
-
-    // Redirect to PhonePe Standard Checkout.
-    window.location.href = order.redirectUrl;
   };
 
   if (session === null) {

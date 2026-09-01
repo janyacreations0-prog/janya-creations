@@ -1,7 +1,12 @@
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
-import { createPhonePePayment } from '@/lib/payments';
+import {
+  createPhonePePayment,
+  isCashfreeConfigured,
+  createCashfreeOrder,
+  getCashfreeMode,
+} from '@/lib/payments';
 import {
   notifyOrderCreated,
   notifyPaymentSuccess,
@@ -29,8 +34,14 @@ export interface CreateOrderResult {
     id: string;
     order_number: string;
     amount: number;
+    /** Payment gateway used for this order. */
+    gateway?: 'cashfree' | 'phonepe';
     /** PhonePe hosted checkout URL — the customer is redirected here. */
     redirectUrl?: string;
+    /** Cashfree hosted checkout session — the browser SDK opens with this. */
+    paymentSessionId?: string;
+    /** Cashfree environment mode used to initialise the browser SDK. */
+    cashfreeMode?: 'sandbox' | 'production';
   };
 }
 
@@ -204,36 +215,80 @@ export async function createOrder(
     // First-party funnel event.
     void recordEvent('order_created', { orderId: order.id }).catch(() => {});
 
-    // Create the PhonePe Standard Checkout order for the server-calculated amount.
-    const ppOrder = await createPhonePePayment(
-      String(order.order_number),
-      Math.round(totalAmount * 100)
-    );
+    // ── Gateway selection (Phase 1) ─────────────────────────────────────────
+    // Cashfree is the default gateway when configured; PhonePe remains the
+    // fully supported fallback (rollback option).
+    const amount = totalAmount;
+    const useCashfree = isCashfreeConfigured();
 
-    if (!ppOrder) {
-      // Gateway not configured or failed — keep the order pending for admin follow-up.
-      console.error('PhonePe payment order creation failed or keys not configured.');
-      return {
-        success: false,
-        error: 'Payment gateway is not configured yet. Please contact support.',
-        order: {
-          id: order.id,
-          order_number: order.order_number,
-          amount: totalAmount,
-        },
-      };
+    let gateway: 'cashfree' | 'phonepe';
+    let gatewayPaymentId: string | null = null;
+    let redirectUrl: string | undefined;
+    let paymentSessionId: string | undefined;
+    let cashfreeMode: 'sandbox' | 'production' | undefined;
+
+    if (useCashfree) {
+      const cfOrder = await createCashfreeOrder(String(order.order_number), String(order.id), amount, {
+        name: clean(input.name) || 'Customer',
+        email: clean(input.email),
+        phone: clean(input.phone),
+      });
+      if (cfOrder) {
+        gateway = 'cashfree';
+        gatewayPaymentId = cfOrder.orderId;
+        paymentSessionId = cfOrder.paymentSessionId;
+        cashfreeMode = getCashfreeMode();
+      } else {
+        // Cashfree order creation failed — do NOT fall through to PhonePe with
+        // a different gateway ID; keep the order pending for admin follow-up.
+        console.error('Cashfree payment order creation failed or keys not configured.');
+        return {
+          success: false,
+          error: 'Payment gateway is not configured yet. Please contact support.',
+          order: {
+            id: order.id,
+            order_number: order.order_number,
+            amount,
+          },
+        };
+      }
+    } else {
+      // PhonePe fallback — existing flow unchanged.
+      const ppOrder = await createPhonePePayment(
+        String(order.order_number),
+        Math.round(amount * 100)
+      );
+      if (!ppOrder) {
+        console.error('PhonePe payment order creation failed or keys not configured.');
+        return {
+          success: false,
+          error: 'Payment gateway is not configured yet. Please contact support.',
+          order: {
+            id: order.id,
+            order_number: order.order_number,
+            amount,
+          },
+        };
+      }
+      gateway = 'phonepe';
+      gatewayPaymentId = ppOrder.orderId;
+      redirectUrl = ppOrder.redirectUrl;
     }
 
     // First-party funnel event — payment was initiated at the gateway.
     void recordEvent('payment_initiated', {
       orderId: order.id,
-      metadata: { gateway: 'phonepe' },
+      metadata: { gateway },
     }).catch(() => {});
 
     // Store the gateway order id.
     await supabase
       .from('orders')
-      .update({ gateway_payment_id: ppOrder.orderId, payment_gateway: 'phonepe' })
+      .update({
+        gateway_payment_id: gatewayPaymentId,
+        payment_gateway: gateway,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', order.id);
 
     return {
@@ -241,8 +296,11 @@ export async function createOrder(
       order: {
         id: order.id,
         order_number: order.order_number,
-        amount: totalAmount,
-        redirectUrl: ppOrder.redirectUrl,
+        amount,
+        gateway,
+        redirectUrl,
+        paymentSessionId,
+        cashfreeMode,
       },
     };
   } catch (e) {
