@@ -84,7 +84,7 @@ export default function RefundPolicy() {
               <ul className="list-disc pl-6 space-y-2">
                 <li>Once a return is approved, the refund is processed to the <strong>original payment method</strong> used for the order.</li>
                 <li>Refunds are processed manually by our team and typically take a few business days to reflect in your account once initiated.</li>
-                <li>If your order was paid through PhonePe, the refund is initiated through the same payment method.</li>
+                <li>Refunds are initiated through the same payment method used for the order.</li>
               </ul>
             </section>
 

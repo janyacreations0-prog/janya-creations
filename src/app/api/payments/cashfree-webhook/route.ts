@@ -68,13 +68,19 @@ export async function POST(request: Request) {
   // 4. Look up our order by order_number.
   const { data: order } = await admin
     .from('orders')
-    .select('id, order_number, total_amount, currency, payment_status, attribution')
+    .select('id, order_number, total_amount, currency, payment_status, payment_gateway, attribution')
     .eq('order_number', orderId)
     .maybeSingle();
 
   if (!order) {
     console.error(`[cashfree] webhook for unknown order: ${orderId}`);
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+  }
+
+  // Defensive: reject if the matched order is a COD order (no online payment).
+  if (order.payment_gateway === 'cod') {
+    console.error(`[cashfree] webhook rejected — order is COD: ${orderId}`);
+    return NextResponse.json({ error: 'Order is COD' }, { status: 400 });
   }
 
   // 5. Amount must match our server-calculated total AND the Cashfree order

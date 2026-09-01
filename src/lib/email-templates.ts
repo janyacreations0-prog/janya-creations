@@ -146,6 +146,24 @@ export function paymentSuccessTemplate(o: EmailOrderData): { subject: string; ht
   return { subject: `Payment confirmed — ${o.order_number}`, html: baseLayout(body) };
 }
 
+export function codPlacedTemplate(o: EmailOrderData): { subject: string; html: string } {
+  const body = `
+    <h2 style="margin:0 0 8px;font-size:18px;color:${TEXT};">Order placed, ${o.customer_name}!</h2>
+    <p style="font-size:14px;line-height:1.6;color:${MUTED};">
+      Thank you for your order <strong>${o.order_number}</strong>. Your order has been placed and will be delivered to your address.
+    </p>
+    <p style="font-size:14px;line-height:1.6;color:${MUTED};">
+      <strong>Payment method:</strong> Cash on Delivery<br/>
+      <strong>Amount payable on delivery:</strong> ${money(o.total_amount)}
+    </p>
+    ${orderItemsTable(o.items || [])}
+    ${totalsBlock(o)}
+    ${addressBlock(o)}
+    ${button(`${getSiteUrl()}/orders`, 'View My Orders')}
+  `;
+  return { subject: `Order placed — ${o.order_number}`, html: baseLayout(body) };
+}
+
 export function paymentFailedTemplate(o: EmailOrderData): { subject: string; html: string } {
   const body = `
     <h2 style="margin:0 0 8px;font-size:18px;color:${TEXT};">Payment failed</h2>

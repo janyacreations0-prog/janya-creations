@@ -1,17 +1,19 @@
 /**
  * Centralized transactional email service.
- * - Sends via the Brevo API (free tier). Failures are logged and never break
- *   checkout / payment / order flows.
+ * - Sends via the Resend API (existing integration). Failures are logged and
+ *   never break checkout / payment / order flows.
  * - Every logical event is recorded in order_email_events (idempotency + admin
  *   visibility). Unique constraints prevent duplicate sends.
  * - Only the trusted server-side path (service-role client) touches the event
- *   log; BREVO_API_KEY never leaves the server.
+ *   log; RESEND_API_KEY never leaves the server.
  */
 import { createAdminClient } from '@/lib/supabase/admin';
+import { isResendConfigured, sendEmail } from './email/resend';
 import {
   orderCreatedTemplate,
   paymentSuccessTemplate,
   paymentFailedTemplate,
+  codPlacedTemplate,
   orderStatusTemplate,
   abandonedCartTemplate,
   type EmailOrderData,
@@ -31,47 +33,24 @@ export interface EmailEvent {
   created_at: string;
 }
 
-function isEmailConfigured(): boolean {
-  return Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
-}
-
-async function sendBrevo(
+/**
+ * Sends a transactional email via Resend and maps the result to the internal
+ * event-outcome shape used by recordOutcome().
+ */
+async function sendTransactionalEmail(
   to: string,
   subject: string,
   html: string
 ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
-  if (!isEmailConfigured()) {
+  if (!isResendConfigured()) {
     return { ok: false, error: 'Email not configured' };
   }
-  try {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        'api-key': process.env.BREVO_API_KEY as string,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        sender: {
-          email: process.env.BREVO_SENDER_EMAIL,
-          name: process.env.BREVO_SENDER_NAME || 'Janya Creations',
-        },
-        to: [{ email: to }],
-        subject,
-        htmlContent: html,
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.error(`[email] Brevo send failed (${res.status}):`, text.slice(0, 300));
-      return { ok: false, error: `Brevo ${res.status}` };
-    }
-    const data = await res.json().catch(() => ({}));
-    return { ok: true, messageId: (data as any).messageId };
-  } catch (e) {
-    console.error('[email] Brevo send error:', e);
-    return { ok: false, error: 'network error' };
-  }
+  const result = await sendEmail({ to, subject, html });
+  return {
+    ok: result.success,
+    messageId: result.emailId,
+    error: result.error,
+  };
 }
 
 /**
@@ -187,7 +166,7 @@ async function notifyOrderEvent(
   const order = await loadOrderForEmail(orderId);
   if (!order) return;
 
-  if (!isEmailConfigured()) {
+  if (!isResendConfigured()) {
     // Record a skipped marker so admin visibility still works, then stop.
     try {
       await createAdminClient()
@@ -197,7 +176,7 @@ async function notifyOrderEvent(
           email: order.customer_email,
           event_type: eventType,
           status: 'skipped',
-          last_error: 'BREVO_API_KEY not configured',
+          last_error: 'RESEND_API_KEY not configured',
         });
     } catch {
       // ignore
@@ -210,7 +189,7 @@ async function notifyOrderEvent(
   }
 
   const { subject, html } = build(order);
-  const result = await sendBrevo(order.customer_email, subject, html);
+  const result = await sendTransactionalEmail(order.customer_email, subject, html);
   await recordOutcome({ orderId, eventType }, result);
 }
 
@@ -226,6 +205,10 @@ export async function notifyPaymentSuccess(orderId: string): Promise<void> {
 
 export async function notifyPaymentFailed(orderId: string): Promise<void> {
   await notifyOrderEvent(orderId, 'payment_failed', paymentFailedTemplate);
+}
+
+export async function notifyCodOrderPlaced(orderId: string): Promise<void> {
+  await notifyOrderEvent(orderId, 'order_placed_cod', codPlacedTemplate);
 }
 
 const STATUS_EVENT_MAP: Record<string, { type: string; headline: string; body: (o: EmailOrderData) => string }> = {
@@ -283,7 +266,7 @@ const SECOND_REMINDER_HOURS = 24;
 const MAX_CARTS_PER_RUN = 50;
 
 export async function processAbandonedCarts(): Promise<{ scanned: number; sent: number }> {
-  if (!isEmailConfigured()) {
+  if (!isResendConfigured()) {
     console.warn('[email] Abandoned-cart scan skipped: email not configured.');
     return { scanned: 0, sent: 0 };
   }
@@ -381,7 +364,7 @@ export async function processAbandonedCarts(): Promise<{ scanned: number; sent: 
         subtotal,
         stage === 2
       );
-      const result = await sendBrevo(email, subject, html);
+      const result = await sendTransactionalEmail(email, subject, html);
       await recordOutcome({ cartId: String(cart.id), eventType }, result);
       if (result.ok) sent += 1;
     }

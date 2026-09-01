@@ -30,12 +30,12 @@ export default function PaymentInformation() {
               <h2 className="text-xl font-semibold text-gray-800 mb-3">1. How We Accept Payments</h2>
               <p>
                 Payments for orders placed on Janya Creations are processed securely through{' '}
-                <strong>PhonePe Standard Checkout</strong>. When you place an order, you will be
-                redirected to PhonePe&apos;s secure payment page to complete your payment.
+                <strong>Cashfree</strong>. When you place an order, you will be
+                redirected to Cashfree&apos;s secure payment page to complete your payment.
               </p>
               <p className="mt-3">
-                The payment options available to you on the PhonePe checkout page are the ones
-                enabled by your PhonePe account and may include UPI, cards and net banking.
+                The payment options available to you on the Cashfree payment page may include UPI,
+                cards, net banking and wallets.
               </p>
             </section>
 
@@ -54,7 +54,7 @@ export default function PaymentInformation() {
                 <ShieldCheck className="w-6 h-6 text-emerald-600 shrink-0" />
                 <p>
                   We do not store your card or banking details. Payments are handled entirely by
-                  PhonePe&apos;s PCI-DSS compliant payment gateway, and your payment information is
+                  Cashfree&apos;s PCI-DSS compliant payment gateway, and your payment information is
                   never shared with us.
                 </p>
               </div>
@@ -63,7 +63,8 @@ export default function PaymentInformation() {
             <section>
               <h2 className="text-xl font-semibold text-gray-800 mb-3">4. Payment Status</h2>
               <p>
-                Your order is confirmed only after PhonePe confirms that the payment was successful.
+                Your order is confirmed only after our payment provider confirms that the payment
+                was successful.
                 You can check the payment and order status by signing in and visiting your{' '}
                 <Link href="/orders" className="text-rose-600 hover:underline">My Orders</Link>{' '}
                 page.

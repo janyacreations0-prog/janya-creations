@@ -29,9 +29,9 @@ export const FAQS: FaqEntry[] = [
   },
   {
     id: 'payment',
-    keywords: ['payment', 'pay', 'upi', 'card', 'netbanking', 'phonepe', 'how do i pay'],
+    keywords: ['payment', 'pay', 'upi', 'card', 'netbanking', 'cashfree', 'how do i pay'],
     answer:
-      'We accept payments securely through PhonePe Standard Checkout. After placing your order you will be redirected to PhonePe to complete your payment, and your order is confirmed only once the payment succeeds.',
+      'We accept payments securely through Cashfree. After placing your order you will be redirected to Cashfree\'s secure payment page to complete your payment, and your order is confirmed only once the payment succeeds.',
     link: { label: 'Payment Information', href: '/payment-information' },
   },
   {

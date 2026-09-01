@@ -217,7 +217,7 @@ export default function AdminOrdersPage() {
                         </div>
                         <div>
                           <p className="text-xs font-bold text-gray-400 uppercase mb-1">Payment</p>
-                          <p className="text-gray-700">Gateway: {o.payment_gateway || '—'}</p>
+                          <p className="text-gray-700">Gateway: {o.payment_gateway === 'cod' ? 'Cash on Delivery' : o.payment_gateway === 'cashfree' ? 'Cashfree' : o.payment_gateway === 'phonepe' ? 'PhonePe' : o.payment_gateway || '—'}</p>
                           <p className="text-gray-500 truncate">Payment ID: {o.gateway_payment_id || '—'}</p>
                           <p className="text-gray-700 mt-1">Subtotal: ₹{Number(o.subtotal).toLocaleString()}</p>
                           <p className="text-gray-900 font-bold">Total: ₹{Number(o.total_amount).toLocaleString()}</p>

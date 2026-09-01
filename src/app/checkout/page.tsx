@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { createOrder } from '@/lib/order-actions';
 import { saveCheckoutAddress } from '@/lib/address-actions';
 import { trackCheckoutStart } from '@/lib/analytics-actions';
+import { normalizeIndianPhone } from '@/lib/utils';
 import { ArrowLeft, Home, Lock, ShoppingBag } from 'lucide-react';
 
 export default function CheckoutPage() {
@@ -20,6 +21,9 @@ export default function CheckoutPage() {
   const [savedAddresses, setSavedAddresses] = useState<any[]>([]);
   const [saveAddress, setSaveAddress] = useState(false);
   const [selectedSavedAddress, setSelectedSavedAddress] = useState('');
+  const [editingNewAddress, setEditingNewAddress] = useState(false);
+  const [lastSelectedSavedAddress, setLastSelectedSavedAddress] = useState('');
+  const [paymentMode, setPaymentMode] = useState<'cod' | 'online'>('online');
 
   const [form, setForm] = useState({
     name: '',
@@ -38,12 +42,33 @@ export default function CheckoutPage() {
       const user = data.session?.user ?? null;
       setSession({ user });
       if (user) {
+        // Fetch the profile (full_name) for pre-fill.
+        supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', user.id)
+          .maybeSingle()
+          .then(({ data: profile }) => {
+            if (profile) {
+              setForm((f) => ({
+                ...f,
+                name: profile.full_name || '',
+                email: user.email || profile.email || '',
+              }));
+            } else {
+              setForm((f) => ({ ...f, email: user.email || '' }));
+            }
+          });
         supabase
           .from('addresses')
           .select('*')
           .order('created_at', { ascending: false })
           .then(({ data: addrs }) => {
-            setSavedAddresses(addrs || []);
+            const list = addrs || [];
+            setSavedAddresses(list);
+            // If the customer has no saved addresses, show the editable form by
+            // default; otherwise show the saved-address selection cards.
+            setEditingNewAddress(list.length === 0);
           });
       }
     });
@@ -61,6 +86,8 @@ export default function CheckoutPage() {
     const addr = savedAddresses.find((a) => String(a.id) === String(id));
     if (!addr) return;
     setSelectedSavedAddress(id);
+    setLastSelectedSavedAddress(id);
+    setEditingNewAddress(false);
     setForm((f) => ({
       ...f,
       name: addr.full_name,
@@ -73,12 +100,43 @@ export default function CheckoutPage() {
     }));
   };
 
+  // Switch to the "add new address" form (deselects any saved address and
+  // clears the address fields so the customer starts fresh; name/email/phone
+  // are left intact and remain editable).
+  const startNewAddress = () => {
+    setSelectedSavedAddress('');
+    setEditingNewAddress(true);
+    setForm((f) => ({
+      ...f,
+      address_line1: '',
+      address_line2: '',
+      city: '',
+      state: '',
+      pincode: '',
+    }));
+  };
+
+  // Return to the saved-address selection state.
+  const cancelNewAddress = () => {
+    setEditingNewAddress(false);
+    if (lastSelectedSavedAddress) {
+      applySavedAddress(lastSelectedSavedAddress);
+    }
+  };
+
   const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    // Client-side phone validation before submitting.
+    if (!normalizeIndianPhone(form.phone)) {
+      setError('Enter a valid 10-digit mobile number.');
+      return;
+    }
+
     if (cart.length === 0) {
       setError('Your cart is empty.');
       return;
@@ -109,6 +167,7 @@ export default function CheckoutPage() {
       state: form.state,
       pincode: form.pincode,
       country: 'India',
+      paymentMode,
     });
 
     setSubmitting(false);
@@ -119,7 +178,10 @@ export default function CheckoutPage() {
     }
 
     const order = result.order;
-    if (order.gateway === 'cashfree' && order.paymentSessionId) {
+    if (order.gateway === 'cod') {
+      // COD — redirect to the order confirmation page.
+      router.push(`/orders/${order.id}`);
+    } else if (order.gateway === 'cashfree' && order.paymentSessionId) {
       // Cashfree hosted checkout — load the SDK dynamically.
       try {
         const script = document.createElement('script');
@@ -210,12 +272,6 @@ export default function CheckoutPage() {
           <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">{error}</div>
         )}
 
-        {!process.env.NEXT_PUBLIC_PHONEPE_ENABLED && (
-          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
-            Online payment is being set up. Orders will be accepted once the payment gateway is configured.
-          </div>
-        )}
-
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Customer + shipping form */}
           <form onSubmit={handlePlaceOrder} className="lg:col-span-3 space-y-6">
@@ -228,7 +284,7 @@ export default function CheckoutPage() {
                 </div>
                 <div>
                   <label className={labelCls} htmlFor="co-email">Email *</label>
-                  <input id="co-email" type="email" value={form.email} onChange={set('email')} required className={inputCls} />
+                  <input id="co-email" type="email" value={form.email} onChange={set('email')} required className={inputCls} readOnly={!!session?.user?.email} />
                 </div>
                 <div className="sm:col-span-2">
                   <label className={labelCls} htmlFor="co-phone">Phone *</label>
@@ -239,71 +295,175 @@ export default function CheckoutPage() {
 
             <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-4">
               <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Shipping Address</h2>
-              {savedAddresses.length > 0 && (
-                <div>
-                  <label className={labelCls} htmlFor="co-saved">Use a saved address</label>
-                  <select
-                    id="co-saved"
-                    value={selectedSavedAddress}
-                    onChange={(e) => applySavedAddress(e.target.value)}
-                    className={inputCls}
+
+              {/* Saved-address selection state */}
+              {savedAddresses.length > 0 && !editingNewAddress && (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-700">Saved Addresses</p>
+                    {savedAddresses.map((a: any) => {
+                      const active = String(a.id) === String(selectedSavedAddress);
+                      return (
+                        <label
+                          key={a.id}
+                          className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
+                            active ? 'border-rose-600 bg-rose-50' : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="savedAddress"
+                            value={a.id}
+                            checked={active}
+                            onChange={() => applySavedAddress(a.id)}
+                            className="mt-0.5 border-gray-300 text-rose-600 focus:ring-rose-500"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-gray-900">{a.full_name}</p>
+                            <p className="text-xs text-gray-600 mt-0.5">
+                              {a.line1}
+                              {a.line2 ? `, ${a.line2}` : ''}
+                            </p>
+                            <p className="text-xs text-gray-600">
+                              {a.city}, {a.state} — {a.pincode}
+                            </p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={startNewAddress}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-600 hover:text-rose-700"
                   >
-                    <option value="">Select a saved address...</option>
-                    {savedAddresses.map((a: any) => (
-                      <option key={a.id} value={a.id}>
-                        {a.full_name} — {a.line1}, {a.city}, {a.pincode}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    + Add New Address
+                  </button>
+                </>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="co-a1">Address Line 1 *</label>
-                  <input id="co-a1" type="text" value={form.address_line1} onChange={set('address_line1')} required className={inputCls} />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="co-a2">Address Line 2</label>
-                  <input id="co-a2" type="text" value={form.address_line2} onChange={set('address_line2')} className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls} htmlFor="co-city">City *</label>
-                  <input id="co-city" type="text" value={form.city} onChange={set('city')} required className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls} htmlFor="co-state">State *</label>
-                  <input id="co-state" type="text" value={form.state} onChange={set('state')} required className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls} htmlFor="co-pin">PIN Code *</label>
-                  <input id="co-pin" type="text" inputMode="numeric" value={form.pincode} onChange={set('pincode')} required className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls} htmlFor="co-country">Country</label>
-                  <input id="co-country" type="text" value="India" readOnly className={`${inputCls} bg-gray-100 text-gray-600`} />
-                </div>
-              </div>
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+
+              {/* New-address editable form state */}
+              {(editingNewAddress || savedAddresses.length === 0) && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className={labelCls} htmlFor="co-a1">Address Line 1 *</label>
+                      <input id="co-a1" type="text" value={form.address_line1} onChange={set('address_line1')} required className={inputCls} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className={labelCls} htmlFor="co-a2">Address Line 2</label>
+                      <input id="co-a2" type="text" value={form.address_line2} onChange={set('address_line2')} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="co-city">City *</label>
+                      <input id="co-city" type="text" value={form.city} onChange={set('city')} required className={inputCls} />
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="co-state">State *</label>
+                      <input id="co-state" type="text" value={form.state} onChange={set('state')} required className={inputCls} />
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="co-pin">PIN Code *</label>
+                      <input id="co-pin" type="text" inputMode="numeric" value={form.pincode} onChange={set('pincode')} required className={inputCls} />
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="co-country">Country</label>
+                      <input id="co-country" type="text" value="India" readOnly className={`${inputCls} bg-gray-100 text-gray-600`} />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={saveAddress}
+                      onChange={(e) => setSaveAddress(e.target.checked)}
+                      className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                    />
+                    Save this address for future orders
+                  </label>
+                  {savedAddresses.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={cancelNewAddress}
+                      className="text-sm font-semibold text-gray-500 hover:text-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Payment Method Selection */}
+            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+              <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Payment Method</h2>
+              <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${paymentMode === 'cod' ? 'border-rose-600 bg-rose-50' : 'border-gray-200 hover:border-gray-300'}`}>
                 <input
-                  type="checkbox"
-                  checked={saveAddress}
-                  onChange={(e) => setSaveAddress(e.target.checked)}
-                  className="rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                  type="radio"
+                  name="paymentMode"
+                  value="cod"
+                  checked={paymentMode === 'cod'}
+                  onChange={() => setPaymentMode('cod')}
+                  className="mt-0.5 border-gray-300 text-rose-600 focus:ring-rose-500"
                 />
-                Save this address for future orders
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-900">Cash on Delivery</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Pay when your order is delivered.</p>
+                </div>
+              </label>
+              <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${paymentMode === 'online' ? 'border-rose-600 bg-rose-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                <input
+                  type="radio"
+                  name="paymentMode"
+                  value="online"
+                  checked={paymentMode === 'online'}
+                  onChange={() => setPaymentMode('online')}
+                  className="mt-0.5 border-gray-300 text-rose-600 focus:ring-rose-500"
+                />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-900">Online Payment</p>
+                  <p className="text-xs text-gray-500 mt-0.5">UPI &bull; Debit/Credit Cards &bull; Net Banking &bull; Wallets</p>
+                </div>
               </label>
             </div>
+
+            {paymentMode === 'online' && (
+              <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Secure Payment</h2>
+                <p className="text-xs text-gray-600">Pay securely using our payment provider.</p>
+                <p className="text-xs text-gray-500">
+                  UPI &bull; Debit/Credit Cards &bull; Net Banking &bull; Wallets
+                </p>
+                <p className="text-xs text-gray-400 flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> Secure payment processing
+                </p>
+              </div>
+            )}
+
+            {paymentMode === 'cod' && (
+              <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Cash on Delivery</h2>
+                <p className="text-xs text-gray-600">Pay when your order is delivered.</p>
+                <p className="text-xs text-gray-500">
+                  Amount payable on delivery: <strong>₹{subtotal.toLocaleString('en-IN')}</strong>
+                </p>
+              </div>
+            )}
 
             <button
               type="submit"
               disabled={submitting || cart.length === 0}
               className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-sm rounded-lg transition-colors shadow-sm"
             >
-              {submitting ? 'Creating order...' : 'Proceed to Payment'}
+              {submitting
+                ? paymentMode === 'cod'
+                  ? 'Placing Order...'
+                  : 'Opening secure payment...'
+                : paymentMode === 'cod'
+                  ? `Place Order — ₹${subtotal.toLocaleString('en-IN')}`
+                  : `Pay ₹${subtotal.toLocaleString('en-IN')} Securely`
+              }
             </button>
-            <p className="text-xs text-gray-400 text-center flex items-center justify-center gap-1">
-              <Lock className="w-3 h-3" /> Pay Securely with PhonePe
-            </p>
           </form>
 
           {/* Order summary */}

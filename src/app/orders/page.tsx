@@ -69,13 +69,17 @@ export default async function OrdersPage() {
                       <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${statusColors[o.status] || 'text-gray-500 bg-gray-100'}`}>
                         {o.status}
                       </span>
-                      {o.payment_status === 'paid' ? (
+                      {o.payment_gateway === 'cod' ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+                          Cash on Delivery
+                        </span>
+                      ) : o.payment_status === 'paid' ? (
                         <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                          Paid
+                          Payment confirmed
                         </span>
                       ) : (
                         <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
-                          {o.payment_status}
+                          {o.payment_status === 'pending' ? 'Pending' : 'Failed'}
                         </span>
                       )}
                     </div>

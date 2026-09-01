@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import {
   createPhonePePayment,
   isCashfreeConfigured,
@@ -11,9 +12,11 @@ import {
   notifyOrderCreated,
   notifyPaymentSuccess,
   notifyOrderStatusChange,
+  notifyCodOrderPlaced,
 } from '@/lib/email';
 import { parseSizes } from '@/lib/sizes';
 import { buildOrderAttribution, recordEvent } from '@/lib/analytics';
+import { normalizeIndianPhone } from '@/lib/utils';
 
 export interface CheckoutCustomerInput {
   name: string;
@@ -25,6 +28,8 @@ export interface CheckoutCustomerInput {
   state: string;
   pincode: string;
   country?: string;
+  /** 'cod' for Cash on Delivery, 'online' for online payment (Cashfree / PhonePe). */
+  paymentMode: 'cod' | 'online';
 }
 
 export interface CreateOrderResult {
@@ -34,8 +39,8 @@ export interface CreateOrderResult {
     id: string;
     order_number: string;
     amount: number;
-    /** Payment gateway used for this order. */
-    gateway?: 'cashfree' | 'phonepe';
+    /** Payment gateway/mode used for this order. */
+    gateway?: 'cod' | 'cashfree' | 'phonepe';
     /** PhonePe hosted checkout URL — the customer is redirected here. */
     redirectUrl?: string;
     /** Cashfree hosted checkout session — the browser SDK opens with this. */
@@ -77,6 +82,20 @@ export async function createOrder(
     if (!clean(input.address_line1) || !clean(input.city) || !clean(input.state) || !clean(input.pincode)) {
       return { success: false, error: 'Please complete your shipping address.' };
     }
+    if (input.paymentMode !== 'cod' && input.paymentMode !== 'online') {
+      return { success: false, error: 'Please choose a valid payment method.' };
+    }
+
+    // Server-side phone validation + normalisation (10-digit Indian mobile).
+    const normalizedPhone = normalizeIndianPhone(phone);
+    if (!normalizedPhone) {
+      return { success: false, error: 'Enter a valid 10-digit mobile number.' };
+    }
+
+    // Use the authenticated user's verified email (server-side) rather than
+    // trusting a client-supplied email that may differ from the account.
+    const verifiedEmail = (user.email && user.email_confirmed_at) ? user.email : email;
+    const finalEmail = verifiedEmail || email;
 
     // Read the customer's server cart (RLS: own rows only).
     const { data: cartItems } = await supabase
@@ -181,14 +200,15 @@ export async function createOrder(
         user_id: user.id,
         status: 'pending',
         payment_status: 'pending',
+        payment_gateway: input.paymentMode === 'cod' ? 'cod' : null,
         subtotal,
         shipping_amount: shippingAmount,
         discount_amount: discountAmount,
         total_amount: totalAmount,
         currency: 'INR',
         customer_name: name,
-        customer_email: email,
-        customer_phone: phone,
+        customer_email: finalEmail,
+        customer_phone: normalizedPhone,
         shipping_address: shippingAddress,
         attribution,
       })
@@ -210,86 +230,137 @@ export async function createOrder(
       return { success: false, error: 'Unable to create your order. Please try again.' };
     }
 
-    // Fire order-created notification (graceful; never blocks checkout).
-    void notifyOrderCreated(order.id).catch(() => {});
-    // First-party funnel event.
-    void recordEvent('order_created', { orderId: order.id }).catch(() => {});
-
-    // ── Gateway selection (Phase 1) ─────────────────────────────────────────
-    // Cashfree is the default gateway when configured; PhonePe remains the
-    // fully supported fallback (rollback option).
+    // ── Payment method selection ─────────────────────────────────────────────
     const amount = totalAmount;
-    const useCashfree = isCashfreeConfigured();
-
-    let gateway: 'cashfree' | 'phonepe';
+    let gateway: 'cod' | 'cashfree' | 'phonepe';
     let gatewayPaymentId: string | null = null;
     let redirectUrl: string | undefined;
     let paymentSessionId: string | undefined;
     let cashfreeMode: 'sandbox' | 'production' | undefined;
 
-    if (useCashfree) {
-      const cfOrder = await createCashfreeOrder(String(order.order_number), String(order.id), amount, {
-        name: clean(input.name) || 'Customer',
-        email: clean(input.email),
-        phone: clean(input.phone),
+    if (input.paymentMode === 'cod') {
+      // ── COD branch ───────────────────────────────────────────────────────
+      // Confirm the COD order atomically: stock decrement, cart clear,
+      // status → confirmed. payment_status remains 'pending' (due on delivery).
+      // NOTE: confirm_cod_order revokes EXECUTE from anon/authenticated, so it
+      // must be invoked through the service-role admin client — exactly like the
+      // Cashfree webhook calls confirm_order_payment.
+      const admin = createAdminClient();
+      const { error: codError } = await admin.rpc('confirm_cod_order', {
+        p_order_id: order.id,
       });
-      if (cfOrder) {
-        gateway = 'cashfree';
-        gatewayPaymentId = cfOrder.orderId;
-        paymentSessionId = cfOrder.paymentSessionId;
-        cashfreeMode = getCashfreeMode();
-      } else {
-        // Cashfree order creation failed — do NOT fall through to PhonePe with
-        // a different gateway ID; keep the order pending for admin follow-up.
-        console.error('Cashfree payment order creation failed or keys not configured.');
+      if (codError) {
+        console.error('COD confirmation failed:', codError.message);
+        // Leave the order in a safe recoverable state (pending).
         return {
           success: false,
-          error: 'Payment gateway is not configured yet. Please contact support.',
-          order: {
-            id: order.id,
-            order_number: order.order_number,
-            amount,
-          },
+          error: 'Unable to place your order. Please try again.',
+          order: { id: order.id, order_number: order.order_number, amount },
+        };
+      }
+      gateway = 'cod';
+
+      // COD analytics — identify the payment mode (not cashfree/phonepe).
+      void recordEvent('order_created', {
+        orderId: order.id,
+        metadata: { gateway: 'cod' },
+      }).catch(() => {});
+
+      // COD confirmation email (idempotent — distinct event_type).
+      // NOTE: notifyOrderCreated is intentionally NOT fired for COD because it
+      // says "awaiting payment"; COD has no online payment step.
+      void notifyCodOrderPlaced(order.id).catch(() => {});
+
+      // Ensure the order carries payment_gateway='cod' (set at insert, but
+      // confirm with an explicit admin update + error check).
+      const { error: codGatewayError } = await admin
+        .from('orders')
+        .update({ payment_gateway: 'cod', updated_at: new Date().toISOString() })
+        .eq('id', order.id);
+      if (codGatewayError) {
+        console.error('COD gateway update failed:', codGatewayError.message);
+        return {
+          success: false,
+          error: 'Unable to place your order. Please try again.',
+          order: { id: order.id, order_number: order.order_number, amount },
         };
       }
     } else {
-      // PhonePe fallback — existing flow unchanged.
-      const ppOrder = await createPhonePePayment(
-        String(order.order_number),
-        Math.round(amount * 100)
-      );
-      if (!ppOrder) {
-        console.error('PhonePe payment order creation failed or keys not configured.');
+      // ── Online payment branch ────────────────────────────────────────────
+      // Fire order-created notification (online: "order received, awaiting
+      // payment") — preserves existing behavior.
+      void notifyOrderCreated(order.id).catch(() => {});
+      void recordEvent('order_created', { orderId: order.id }).catch(() => {});
+
+      // Cashfree is the default gateway when configured; PhonePe remains the
+      // fully supported fallback (rollback option).
+      const useCashfree = isCashfreeConfigured();
+
+      if (useCashfree) {
+        const cfOrder = await createCashfreeOrder(String(order.order_number), String(order.id), amount, {
+          name: clean(input.name) || 'Customer',
+          email: finalEmail,
+          phone: normalizedPhone,
+        });
+        if (cfOrder) {
+          gateway = 'cashfree';
+          gatewayPaymentId = cfOrder.orderId;
+          paymentSessionId = cfOrder.paymentSessionId;
+          cashfreeMode = getCashfreeMode();
+        } else {
+          // Cashfree order creation failed — do NOT fall through to PhonePe.
+          console.error('Cashfree payment order creation failed or keys not configured.');
+          return {
+            success: false,
+            error: 'Unable to start secure payment. Please try again.',
+            order: { id: order.id, order_number: order.order_number, amount },
+          };
+        }
+      } else {
+        // PhonePe fallback — existing flow unchanged.
+        const ppOrder = await createPhonePePayment(
+          String(order.order_number),
+          Math.round(amount * 100)
+        );
+        if (!ppOrder) {
+          console.error('PhonePe payment order creation failed or keys not configured.');
+          return {
+            success: false,
+            error: 'Payment gateway is not configured yet. Please contact support.',
+            order: { id: order.id, order_number: order.order_number, amount },
+          };
+        }
+        gateway = 'phonepe';
+        gatewayPaymentId = ppOrder.orderId;
+        redirectUrl = ppOrder.redirectUrl;
+      }
+
+      // First-party funnel event — payment was initiated at the gateway.
+      void recordEvent('payment_initiated', {
+        orderId: order.id,
+        metadata: { gateway },
+      }).catch(() => {});
+
+      // Store the gateway order id (admin client — customers have no UPDATE
+      // grant on orders; only trusted server code may write this).
+      const admin = createAdminClient();
+      const { error: gatewayUpdateError } = await admin
+        .from('orders')
+        .update({
+          gateway_payment_id: gatewayPaymentId,
+          payment_gateway: gateway,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', order.id);
+      if (gatewayUpdateError) {
+        console.error('Gateway update failed:', gatewayUpdateError.message);
         return {
           success: false,
-          error: 'Payment gateway is not configured yet. Please contact support.',
-          order: {
-            id: order.id,
-            order_number: order.order_number,
-            amount,
-          },
+          error: 'Unable to start secure payment. Please try again.',
+          order: { id: order.id, order_number: order.order_number, amount },
         };
       }
-      gateway = 'phonepe';
-      gatewayPaymentId = ppOrder.orderId;
-      redirectUrl = ppOrder.redirectUrl;
     }
-
-    // First-party funnel event — payment was initiated at the gateway.
-    void recordEvent('payment_initiated', {
-      orderId: order.id,
-      metadata: { gateway },
-    }).catch(() => {});
-
-    // Store the gateway order id.
-    await supabase
-      .from('orders')
-      .update({
-        gateway_payment_id: gatewayPaymentId,
-        payment_gateway: gateway,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', order.id);
 
     return {
       success: true,

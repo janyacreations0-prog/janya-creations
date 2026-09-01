@@ -60,8 +60,8 @@ export default function CancellationPolicy() {
               <h2 className="text-xl font-semibold text-gray-800 mb-3">4. Refund After Cancellation</h2>
               <p>
                 When a cancellation is approved, the refund is processed manually to the original
-                payment method used for the order. If you paid through PhonePe, the refund will be
-                initiated through the same method.
+                payment method used for the order. Refunds are initiated through the same payment
+                method used for the order.
               </p>
             </section>
 

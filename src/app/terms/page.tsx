@@ -50,7 +50,7 @@ export default function TermsConditions() {
             <h2 className="text-xl font-semibold text-gray-800 mb-3">3. Orders and Payments</h2>
             <ul className="list-disc pl-6 text-gray-600 space-y-2">
               <li>An order is confirmed only after payment is successfully completed.</li>
-              <li>Payments are processed securely through PhonePe Standard Checkout.</li>
+              <li>Payments are processed securely through our payment provider (Cashfree).</li>
               <li>We may cancel an order if the product is unavailable, in which case any payment made will be refunded to the original payment method.</li>
             </ul>
           </section>

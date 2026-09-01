@@ -36,7 +36,7 @@ export default function PrivacyPolicy() {
             <ul className="list-disc pl-6 mt-2 text-gray-600 space-y-1">
               <li><strong>Account Information:</strong> Your name, email address and phone number when you create an account or place an order.</li>
               <li><strong>Order Information:</strong> Products purchased, shipping address, order history and order status.</li>
-              <li><strong>Payment Information:</strong> We do not store card or bank details. Payments are processed by our payment provider, PhonePe.</li>
+              <li><strong>Payment Information:</strong> We do not store card or bank details. Payments are processed by our payment provider, Cashfree.</li>
               <li><strong>Technical Information:</strong> Basic browser and device information needed to operate the website.</li>
             </ul>
           </section>
@@ -55,7 +55,7 @@ export default function PrivacyPolicy() {
             <h2 className="text-xl font-semibold text-gray-800 mb-3">3. Sharing Your Information</h2>
             <p className="text-gray-600 leading-relaxed">
               We share your information only where necessary to provide our services, such as with
-              our payment provider (PhonePe) to process your payment, and with logistics partners
+              our payment provider (Cashfree) to process your payment, and with logistics partners
               where needed to deliver your order. We do not sell your personal information to anyone.
             </p>
           </section>
@@ -64,8 +64,8 @@ export default function PrivacyPolicy() {
             <h2 className="text-xl font-semibold text-gray-800 mb-3">4. Information Security</h2>
             <p className="text-gray-600 leading-relaxed">
               We take reasonable measures to protect your personal information. Payment transactions
-              are handled entirely by PhonePe&apos;s secure, PCI-DSS compliant payment gateway, and we
-              never have access to your full card or banking details.
+              are handled entirely by our payment provider&apos;s secure, PCI-DSS compliant payment
+              gateway, and we never have access to your full card or banking details.
             </p>
           </section>
 

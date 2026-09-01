@@ -50,6 +50,26 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
     refunded: 'text-rose-700 bg-rose-50',
   };
 
+  const isCod = order.payment_gateway === 'cod' && order.status === 'confirmed';
+
+  const paymentStatusColors: Record<string, string> = {
+    paid: 'text-emerald-700 bg-emerald-50',
+    pending: 'text-amber-700 bg-amber-50',
+    failed: 'text-rose-700 bg-rose-50',
+    refunded: 'text-rose-700 bg-rose-50',
+  };
+
+  const paymentStatusLabel: Record<string, string> = {
+    paid: 'Payment confirmed',
+    pending: isCod ? 'Cash on Delivery' : 'Payment is being confirmed',
+    failed: 'Payment failed',
+    refunded: 'Payment refunded',
+  };
+
+  const paid = order.payment_status === 'paid';
+  const pendingPayment = order.payment_status === 'pending' && !isCod;
+  const failedPayment = order.payment_status === 'failed';
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-4 py-8">
@@ -57,13 +77,47 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
           <ArrowLeft className="w-4 h-4" /> My Orders
         </Link>
 
-        {placed === '1' && (
+        {isCod && (
           <div className="mb-6 bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center">
             <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-3" />
             <h1 className="text-2xl font-serif font-bold text-gray-900">Order placed successfully!</h1>
             <p className="text-sm text-gray-600 mt-2">
-              Thank you for your order. Your order number is{' '}
+              <strong>Payment method:</strong> Cash on Delivery<br/>
+              <strong>Amount payable on delivery:</strong> ₹{Number(order.total_amount).toLocaleString('en-IN')}
+            </p>
+          </div>
+        )}
+
+        {paid && (
+          <div className="mb-6 bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center">
+            <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-3" />
+            <h1 className="text-2xl font-serif font-bold text-gray-900">Order placed successfully!</h1>
+            <p className="text-sm text-gray-600 mt-2">
+              Your payment has been confirmed. Thank you for your order. Your order number is{' '}
               <span className="font-bold text-gray-900">{order.order_number}</span>.
+            </p>
+          </div>
+        )}
+
+        {pendingPayment && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+            <h1 className="text-2xl font-serif font-bold text-gray-900">Payment is being confirmed</h1>
+            <p className="text-sm text-gray-600 mt-2">
+              We have received your order. Your payment is being securely verified. Please don&apos;t make
+              another payment. You will receive a confirmation email shortly.
+            </p>
+          </div>
+        )}
+
+        {failedPayment && (
+          <div className="mb-6 bg-rose-50 border border-rose-200 rounded-xl p-6 text-center">
+            <h1 className="text-2xl font-serif font-bold text-gray-900">Payment failed</h1>
+            <p className="text-sm text-gray-600 mt-2">
+              Your payment was not completed. You can{' '}
+              <Link href="/shop" className="text-rose-600 font-semibold hover:text-rose-700">
+                browse our collection
+              </Link>{' '}
+              and try again. If you were charged, we will refund you automatically.
             </p>
           </div>
         )}
@@ -82,8 +136,8 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
           <span className={`text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full ${statusColors[order.status] || 'text-gray-500 bg-gray-100'}`}>
             {order.status}
           </span>
-          <span className="text-xs font-bold uppercase tracking-wider text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
-            Payment: {order.payment_status}
+          <span className={`text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full ${paymentStatusColors[order.payment_status] || 'text-gray-600 bg-gray-100'}`}>
+            {paymentStatusLabel[order.payment_status] || order.payment_status}
           </span>
         </div>
 
