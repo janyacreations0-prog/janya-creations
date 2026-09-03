@@ -205,6 +205,124 @@ export async function clearServerCart(): Promise<CartMutationResult> {
   }
 }
 
+export interface BuyAgainResult {
+  success: boolean;
+  error?: string;
+  /** Number of distinct items successfully added to the cart. */
+  added: number;
+  /** Product names that could not be re-added (deleted / out of stock). */
+  unavailable: string[];
+  /** Whether every line in the order was added (nothing unavailable). */
+  complete: boolean;
+}
+
+/**
+ * "Buy Again" — re-adds the currently-available items from an existing
+ * authenticated order into the customer's cart for a NEW purchase.
+ *
+ * IMPORTANT:
+ *  - Does NOT create a new order / reuse old payment or transaction IDs.
+ *  - Server re-reads the current product price + stock for every line.
+ *  - Deleted / out-of-stock items are skipped and reported.
+ *  - The customer then completes checkout normally (new payment).
+ */
+export async function buyAgainOrder(orderId: string): Promise<BuyAgainResult> {
+  const fail = (error: string): BuyAgainResult => ({
+    success: false,
+    error,
+    added: 0,
+    unavailable: [],
+    complete: false,
+  });
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return fail('Sign in required.');
+
+    // Ownership is enforced by RLS (orders select_own) AND an explicit check.
+    const { data: order } = await supabase
+      .from('orders')
+      .select('id, user_id')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (!order || order.user_id !== user.id) {
+      return fail('Order not found.');
+    }
+
+    const { data: lines } = await supabase
+      .from('order_items')
+      .select('product_id, product_name, quantity, attributes')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: true });
+    if (!lines || lines.length === 0) {
+      return fail('This order has no items.');
+    }
+
+    const cartId = await getCartId(supabase, user.id);
+    if (!cartId) return fail('Unable to update cart. Please try again.');
+
+    const unavailable: string[] = [];
+    let added = 0;
+
+    for (const line of lines as {
+      product_id: string | null;
+      product_name: string;
+      quantity: number;
+      attributes?: Record<string, unknown>;
+    }[]) {
+      const label = line.product_name || 'An item';
+      if (!line.product_id) {
+        unavailable.push(`${label} (no longer available)`);
+        continue;
+      }
+      const variant = String((line.attributes as any)?.size || '');
+      const product = await readProduct(supabase, line.product_id);
+      if (!product) {
+        unavailable.push(`${label} (no longer available)`);
+        continue;
+      }
+      const stock = variantStock(product, variant);
+      if (stock <= 0) {
+        unavailable.push(`${label}${variant ? ` (${variant})` : ''} (out of stock)`);
+        continue;
+      }
+      const qty = clampQuantity(line.quantity, stock);
+      const { data: existing } = await supabase
+        .from('cart_items')
+        .select('id, quantity')
+        .eq('cart_id', cartId)
+        .eq('product_id', line.product_id)
+        .eq('variant', variant)
+        .maybeSingle();
+      if (existing) {
+        const nextQty = Math.min((existing.quantity || 0) + qty, stock);
+        const { error } = await supabase
+          .from('cart_items')
+          .update({ quantity: nextQty, updated_at: new Date().toISOString() })
+          .eq('id', existing.id);
+        if (error) return fail('Unable to update cart. Please try again.');
+      } else {
+        const { error } = await supabase
+          .from('cart_items')
+          .insert({ cart_id: cartId, product_id: line.product_id, variant, quantity: qty });
+        if (error) return fail('Unable to update cart. Please try again.');
+      }
+      added += 1;
+    }
+
+    return {
+      success: true,
+      added,
+      unavailable,
+      complete: unavailable.length === 0,
+    };
+  } catch (e) {
+    return fail('Unable to re-add items. Please try again.');
+  }
+}
+
 /**
  * Merges a guest (localStorage) cart into the authenticated user's server cart.
  * Lines are keyed by (product, variant); quantities are summed and capped at the

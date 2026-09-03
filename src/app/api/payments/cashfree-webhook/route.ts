@@ -7,6 +7,19 @@ import {
 import { notifyPaymentSuccess, notifyPaymentFailed } from '@/lib/email';
 import { recordEventForSession } from '@/lib/analytics';
 
+/** Maps Cashfree payment group values to customer-friendly labels. */
+function mapCashfreeMethod(group: string): string {
+  const map: Record<string, string> = {
+    upi: 'UPI',
+    card: 'Credit/Debit Card',
+    netbanking: 'Net Banking',
+    wallet: 'Wallet',
+    paylater: 'Pay Later',
+    qr: 'QR',
+  };
+  return map[group.toLowerCase()] || 'Online Payment';
+}
+
 /**
  * Cashfree Payment Gateway server-to-server webhook.
  *
@@ -68,7 +81,7 @@ export async function POST(request: Request) {
   // 4. Look up our order by order_number.
   const { data: order } = await admin
     .from('orders')
-    .select('id, order_number, total_amount, currency, payment_status, payment_gateway, attribution')
+    .select('id, order_number, total_amount, currency, payment_status, status, payment_gateway, attribution')
     .eq('order_number', orderId)
     .maybeSingle();
 
@@ -77,9 +90,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
   }
 
-  // Defensive: reject if the matched order is a COD order (no online payment).
-  if (order.payment_gateway === 'cod') {
-    console.error(`[cashfree] webhook rejected — order is COD: ${orderId}`);
+  // Defensive: reject a COD order that was never reserved (not confirmed) —
+  // COD orders that went through confirm_cod_order are status='confirmed' and
+  // may legitimately be paid online later via "Pay Now".
+  if (order.payment_gateway === 'cod' && order.status !== 'confirmed') {
+    console.error(`[cashfree] webhook rejected — unconfirmed COD order: ${orderId}`);
     return NextResponse.json({ error: 'Order is COD' }, { status: 400 });
   }
 
@@ -133,26 +148,58 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Order not paid' }, { status: 400 });
     }
 
-    // Trusted, idempotent confirmation — uses existing RPC.
-    await admin.rpc('confirm_order_payment', {
-      p_order_id: order.id,
-      p_gateway: 'cashfree',
-      p_gateway_payment_id: cfPaymentId,
-    });
-    void notifyPaymentSuccess(order.id).catch(() => {});
+    // Map the Cashfree payment group/method to a customer-friendly label.
+    const paymentGroup =
+      (paymentData as any)?.payment_group || (paymentData as any)?.payment_method?.type || '';
+    const methodLabel = mapCashfreeMethod(paymentGroup);
+
+    if (order.payment_gateway === 'cod') {
+      // COD order being paid online later via the "Pay Now" email link. COD
+      // already decremented stock + cleared cart atomically at placement
+      // (confirm_cod_order). Mark it paid WITHOUT decrementing stock a second
+      // time — the no-stock RPC keeps inventory consistent.
+      await admin.rpc('mark_order_paid_no_stock', {
+        p_order_id: order.id,
+        p_gateway: 'cashfree',
+        p_gateway_payment_id: cfPaymentId,
+      });
+    } else {
+      // Normal online order (status pending → paid). Trusted, idempotent
+      // confirmation — uses existing RPC (decrements stock).
+      await admin.rpc('confirm_order_payment', {
+        p_order_id: order.id,
+        p_gateway: 'cashfree',
+        p_gateway_payment_id: cfPaymentId,
+      });
+    }
+
+    // Send the payment-success email and record analytics BEFORE responding.
+    // Vercel may freeze/terminate the serverless function as soon as the
+    // response is returned, which kills fire-and-forget async work — so the
+    // email chain (claimEvent → Resend → recordOutcome) would never complete.
+    try {
+      await notifyPaymentSuccess(order.id, methodLabel);
+    } catch (e) {
+      console.error('[cashfree] payment_success email failed:', e);
+    }
 
     const attribution = (order.attribution as { session_id?: string } | null) ?? null;
-    void recordEventForSession('payment_success', attribution?.session_id ?? null, {
-      orderId: order.id,
-      metadata: { gateway: 'cashfree', cf_payment_id: cfPaymentId },
-    }).catch(() => {});
+    try {
+      await recordEventForSession('payment_success', attribution?.session_id ?? null, {
+        orderId: order.id,
+        metadata: { gateway: 'cashfree', cf_payment_id: cfPaymentId, method: paymentGroup },
+      });
+    } catch (e) {
+      console.error('[cashfree] payment_success analytics failed:', e);
+    }
 
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
 
   if (eventType === 'PAYMENT_FAILED_WEBHOOK') {
-    // Only mark as failed if currently pending.
-    if (order.payment_status === 'pending') {
+    // Only mark as failed if currently pending AND it is an online order
+    // (COD orders stay pending — payment is due on delivery).
+    if (order.payment_status === 'pending' && order.status !== 'confirmed') {
       await admin
         .from('orders')
         .update({ payment_status: 'failed', updated_at: new Date().toISOString() })

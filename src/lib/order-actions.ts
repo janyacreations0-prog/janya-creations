@@ -287,11 +287,6 @@ export async function createOrder(
       }
     } else {
       // ── Online payment branch ────────────────────────────────────────────
-      // Fire order-created notification (online: "order received, awaiting
-      // payment") — preserves existing behavior.
-      void notifyOrderCreated(order.id).catch(() => {});
-      void recordEvent('order_created', { orderId: order.id }).catch(() => {});
-
       // Cashfree is the default gateway when configured; PhonePe remains the
       // fully supported fallback (rollback option).
       const useCashfree = isCashfreeConfigured();
@@ -360,6 +355,11 @@ export async function createOrder(
           order: { id: order.id, order_number: order.order_number, amount },
         };
       }
+
+      // Online order received email + analytics — fired only AFTER the payment
+      // gateway is successfully configured for this order.
+      void notifyOrderCreated(order.id).catch(() => {});
+      void recordEvent('order_created', { orderId: order.id }).catch(() => {});
     }
 
     return {
@@ -377,6 +377,96 @@ export async function createOrder(
   } catch (e) {
     console.error('createOrder error:', e);
     return { success: false, error: 'Unable to create your order. Please try again.' };
+  }
+}
+
+/**
+ * "Pay Now" — initiates an online (Cashfree) payment for a specific existing
+ * order (used from the COD confirmation email). Secure, order-scoped flow:
+ *  - authenticated + ownership via RLS
+ *  - only unpaid/pending orders can be paid
+ *  - returns a payment session for Cashfree Hosted Checkout
+ * Does NOT mark the order paid and does NOT accept an arbitrary order id from
+ * the browser — the server looks up the exact order for the session user.
+ */
+export async function payOrderOnline(
+  orderId: string
+): Promise<{
+  success: boolean;
+  error?: string;
+  order?: {
+    id: string;
+    order_number: string;
+    amount: number;
+    gateway: 'cashfree';
+    paymentSessionId: string;
+    cashfreeMode: 'sandbox' | 'production';
+  };
+}> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, error: 'Please sign in to pay for your order.' };
+    }
+
+    // RLS restricts this to the authenticated owner's order.
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('id, order_number, total_amount, payment_status, customer_name, customer_email, customer_phone')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (error || !order) {
+      return { success: false, error: 'Order not found.' };
+    }
+    if (order.payment_status === 'paid') {
+      return { success: false, error: 'This order is already paid.' };
+    }
+    if (order.payment_status !== 'pending') {
+      return { success: false, error: 'This order is not eligible for payment.' };
+    }
+
+    const amount = Number(order.total_amount);
+    const cfOrder = await createCashfreeOrder(
+      String(order.order_number),
+      String(order.id),
+      amount,
+      {
+        name: order.customer_name || 'Customer',
+        email: order.customer_email,
+        phone: order.customer_phone,
+      }
+    );
+    if (!cfOrder) {
+      return { success: false, error: 'Unable to start secure payment. Please try again.' };
+    }
+
+    // Record the gateway reference (admin client; customers have no UPDATE grant).
+    const admin = createAdminClient();
+    await admin
+      .from('orders')
+      .update({
+        gateway_payment_id: cfOrder.orderId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', order.id);
+
+    return {
+      success: true,
+      order: {
+        id: order.id,
+        order_number: order.order_number,
+        amount,
+        gateway: 'cashfree',
+        paymentSessionId: cfOrder.paymentSessionId,
+        cashfreeMode: getCashfreeMode(),
+      },
+    };
+  } catch (e) {
+    console.error('payOrderOnline error:', e);
+    return { success: false, error: 'Unable to start secure payment. Please try again.' };
   }
 }
 

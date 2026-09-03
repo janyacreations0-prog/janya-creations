@@ -19,6 +19,7 @@ export interface EmailItem {
 }
 
 export interface EmailOrderData {
+  order_id: string;
   order_number: string;
   customer_name: string;
   customer_email: string;
@@ -29,6 +30,9 @@ export interface EmailOrderData {
   total_amount: number;
   payment_status: string;
   status: string;
+  payment_gateway?: string;
+  /** Customer-friendly payment method label (UPI, Card, Net Banking, Wallet...). */
+  payment_method_label?: string;
   created_at?: string;
   shipping_address?: Record<string, string> | null;
   items?: EmailItem[];
@@ -132,6 +136,7 @@ export function orderCreatedTemplate(o: EmailOrderData): { subject: string; html
 }
 
 export function paymentSuccessTemplate(o: EmailOrderData): { subject: string; html: string } {
+  const methodLabel = o.payment_method_label || (o.payment_gateway === 'cod' ? 'Cash on Delivery' : 'Online Payment');
   const body = `
     <h2 style="margin:0 0 8px;font-size:18px;color:${TEXT};">Payment successful, ${o.customer_name}!</h2>
     <p style="font-size:14px;line-height:1.6;color:${MUTED};">
@@ -139,11 +144,19 @@ export function paymentSuccessTemplate(o: EmailOrderData): { subject: string; ht
     </p>
     ${orderItemsTable(o.items || [])}
     ${totalsBlock(o)}
-    <p style="margin:8px 0 0;font-size:13px;color:${MUTED};">Payment status: <strong>Paid</strong></p>
+    <p style="margin:8px 0 0;font-size:13px;color:${MUTED};">Payment Method: <strong>${methodLabel}</strong></p>
+    <p style="margin:4px 0 0;font-size:13px;color:${MUTED};">Payment Status: <strong>Payment Confirmed</strong></p>
     ${addressBlock(o)}
     ${button(`${getSiteUrl()}/orders`, 'View My Orders')}
   `;
   return { subject: `Payment confirmed — ${o.order_number}`, html: baseLayout(body) };
+}
+
+/** "Pay Now" button shown on unpaid COD orders. */
+function payNowBlock(o: EmailOrderData): string {
+  if (!o.order_id || o.payment_status === 'paid') return '';
+  return `<p style="font-size:14px;line-height:1.6;color:${MUTED};">Want to pay online instead?</p>
+    ${button(`${getSiteUrl()}/orders/${o.order_id}/pay`, 'Pay Now')}`;
 }
 
 export function codPlacedTemplate(o: EmailOrderData): { subject: string; html: string } {
@@ -158,6 +171,7 @@ export function codPlacedTemplate(o: EmailOrderData): { subject: string; html: s
     </p>
     ${orderItemsTable(o.items || [])}
     ${totalsBlock(o)}
+    ${payNowBlock(o)}
     ${addressBlock(o)}
     ${button(`${getSiteUrl()}/orders`, 'View My Orders')}
   `;

@@ -138,6 +138,7 @@ async function loadOrderForEmail(orderId: string): Promise<EmailOrderData | null
       .eq('order_id', orderId)
       .order('created_at', { ascending: true });
     return {
+      order_id: order.id,
       order_number: order.order_number,
       customer_name: order.customer_name,
       customer_email: order.customer_email,
@@ -148,6 +149,7 @@ async function loadOrderForEmail(orderId: string): Promise<EmailOrderData | null
       total_amount: Number(order.total_amount),
       payment_status: order.payment_status,
       status: order.status,
+      payment_gateway: order.payment_gateway,
       created_at: order.created_at,
       shipping_address: order.shipping_address ?? null,
       items: items || [],
@@ -161,7 +163,8 @@ async function loadOrderForEmail(orderId: string): Promise<EmailOrderData | null
 async function notifyOrderEvent(
   orderId: string,
   eventType: string,
-  build: (o: EmailOrderData) => { subject: string; html: string }
+  build: (o: EmailOrderData) => { subject: string; html: string },
+  extra?: Partial<EmailOrderData>
 ): Promise<void> {
   const order = await loadOrderForEmail(orderId);
   if (!order) return;
@@ -188,7 +191,7 @@ async function notifyOrderEvent(
     return; // already sent (duplicate webhook/callback/status submission)
   }
 
-  const { subject, html } = build(order);
+  const { subject, html } = build({ ...order, ...extra });
   const result = await sendTransactionalEmail(order.customer_email, subject, html);
   await recordOutcome({ orderId, eventType }, result);
 }
@@ -199,8 +202,16 @@ export async function notifyOrderCreated(orderId: string): Promise<void> {
   await notifyOrderEvent(orderId, 'order_created', orderCreatedTemplate);
 }
 
-export async function notifyPaymentSuccess(orderId: string): Promise<void> {
-  await notifyOrderEvent(orderId, 'payment_success', paymentSuccessTemplate);
+export async function notifyPaymentSuccess(
+  orderId: string,
+  paymentMethodLabel?: string
+): Promise<void> {
+  await notifyOrderEvent(
+    orderId,
+    'payment_success',
+    paymentSuccessTemplate,
+    paymentMethodLabel ? { payment_method_label: paymentMethodLabel } : undefined
+  );
 }
 
 export async function notifyPaymentFailed(orderId: string): Promise<void> {
