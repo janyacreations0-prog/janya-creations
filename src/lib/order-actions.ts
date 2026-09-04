@@ -9,7 +9,6 @@ import {
   getCashfreeMode,
 } from '@/lib/payments';
 import {
-  notifyOrderCreated,
   notifyPaymentSuccess,
   notifyOrderStatusChange,
   notifyCodOrderPlaced,
@@ -356,9 +355,13 @@ export async function createOrder(
         };
       }
 
-      // Online order received email + analytics — fired only AFTER the payment
-      // gateway is successfully configured for this order.
-      void notifyOrderCreated(order.id).catch(() => {});
+      // Online payment branch (Cashfree / PhonePe).
+      // NOTE: Do NOT send an "order_created" customer email here.
+      // The customer notification for online payments comes from the
+      // payment_success / payment_failed webhook flow (see cashfree-webhook
+      // route.ts). Sending an "awaiting payment" email from createOrder()
+      // risks delivering it AFTER payment confirmation due to Vercel
+      // serverless function freeze terminating fire-and-forget async work.
       void recordEvent('order_created', { orderId: order.id }).catch(() => {});
     }
 

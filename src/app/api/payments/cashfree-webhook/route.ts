@@ -205,7 +205,14 @@ export async function POST(request: Request) {
         .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
         .eq('id', order.id)
         .eq('payment_status', 'pending');
-      void notifyPaymentFailed(order.id).catch(() => {});
+      // Await the payment-failed email before responding so Vercel cannot
+      // terminate the serverless function and lose the email (same pattern
+      // as payment_success above).
+      try {
+        await notifyPaymentFailed(order.id);
+      } catch (e) {
+        console.error('[cashfree] payment_failed email failed:', e);
+      }
     }
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
